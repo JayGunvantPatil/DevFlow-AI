@@ -2,7 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "functions": {
-    "api/**/*": {
+    "api/**/*.ts": {
+      "includeFiles": "api/_utils/**"
+    },
+    "api/**/*.js": {
       "includeFiles": "api/_utils/**"
     }
   },
