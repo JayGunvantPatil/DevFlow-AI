@@ -11,6 +11,14 @@
   },
   "rewrites": [
     {
+      "source": "/api/projects/:id",
+      "destination": "/api/projects/[id]?id=:id"
+    },
+    {
+      "source": "/api/tasks/:id",
+      "destination": "/api/tasks/[id]?id=:id"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },

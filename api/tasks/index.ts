@@ -1,5 +1,6 @@
 import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
 import { validateTaskInput } from '../_utils/validate.js';
+import taskDetailHandler from './[id].js';
 import {
     VercelRequest,
     VercelResponse,
@@ -11,12 +12,21 @@ import {
 } from '../_utils/response.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (handleCors(req, res, ['GET', 'POST', 'OPTIONS'])) {
+    if (handleCors(req, res, ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'])) {
         return;
     }
 
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+
+    // If request uses detail methods (PATCH/PUT/DELETE) or GET with an id, delegate to taskDetailHandler
+    if (req.method === 'PATCH' || req.method === 'PUT' || req.method === 'DELETE') {
+        return taskDetailHandler(req, res);
+    }
+
+    if (req.method === 'GET' && req.query?.id && typeof req.query.id === 'string') {
+        return taskDetailHandler(req, res);
+    }
 
     try {
         if (req.method === 'GET') {
@@ -155,7 +165,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        return methodNotAllowedResponse(res, ['GET', 'POST']);
+        return methodNotAllowedResponse(res, ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']);
     } catch (error: any) {
         if (error instanceof DatabaseNotConfiguredError) {
             return jsonResponse(res, 503, {

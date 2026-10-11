@@ -1,5 +1,6 @@
 import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
 import { validateProjectInput } from '../_utils/validate.js';
+import projectDetailHandler from './[id].js';
 import {
     VercelRequest,
     VercelResponse,
@@ -11,13 +12,21 @@ import {
 } from '../_utils/response.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (handleCors(req, res, ['GET', 'POST', 'OPTIONS'])) {
+    if (handleCors(req, res, ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'])) {
         return;
     }
 
     // Development-stage header as requested
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+
+    // If request has project id, delegate to projectDetailHandler
+    if ((req.method === 'DELETE' || req.method === 'PATCH' || req.method === 'PUT') && (req.query?.id || (req.body && req.body.id))) {
+        return projectDetailHandler(req, res);
+    }
+    if (req.method === 'GET' && req.query?.id && typeof req.query.id === 'string') {
+        return projectDetailHandler(req, res);
+    }
 
     try {
         if (req.method === 'GET') {

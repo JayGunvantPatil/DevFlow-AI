@@ -153,6 +153,48 @@ describe('API Route Handlers Integration', () => {
         assert.equal(res._getBody().error.code, 'NO_FIELDS_TO_UPDATE');
     });
 
+    test('taskDetailHandler returns 400 when PATCH has invalid status', async () => {
+        const { req, res } = createMockReqRes('PATCH', { status: 'invalid_status' }, { id: 'task-1' });
+        await taskDetailHandler(req, res);
+
+        assert.equal(res._getStatusCode(), 400);
+        assert.equal(res._getBody().error.code, 'INVALID_STATUS');
+    });
+
+    test('taskDetailHandler returns 400 when PATCH has invalid priority', async () => {
+        const { req, res } = createMockReqRes('PATCH', { priority: 'super_urgent' }, { id: 'task-1' });
+        await taskDetailHandler(req, res);
+
+        assert.equal(res._getStatusCode(), 400);
+        assert.equal(res._getBody().error.code, 'INVALID_PRIORITY');
+    });
+
+    test('taskDetailHandler extracts task id from body when query is empty', async () => {
+        const { req, res } = createMockReqRes('PATCH', { id: 'task-100', status: 'done' }, {});
+        await taskDetailHandler(req, res);
+
+        // Since DATABASE_URL is unset in test beforeEach, it reaches the DB query and returns 503 DATABASE_NOT_CONFIGURED
+        assert.equal(res._getStatusCode(), 503);
+        assert.equal(res._getBody().code, 'DATABASE_NOT_CONFIGURED');
+    });
+
+    test('tasksHandler delegates PATCH with task id to taskDetailHandler', async () => {
+        const { req, res } = createMockReqRes('PATCH', { status: 'in_progress' }, { id: 'task-200' });
+        await tasksHandler(req, res);
+
+        // Validated task parameters and attempted DB query, returning 503 because DATABASE_URL is unset
+        assert.equal(res._getStatusCode(), 503);
+        assert.equal(res._getBody().code, 'DATABASE_NOT_CONFIGURED');
+    });
+
+    test('projectDetailHandler returns 400 when PATCH has invalid status', async () => {
+        const { req, res } = createMockReqRes('PATCH', { status: 'non_existent_status' }, { id: 'proj-1' });
+        await projectDetailHandler(req, res);
+
+        assert.equal(res._getStatusCode(), 400);
+        assert.equal(res._getBody().error.code, 'INVALID_STATUS');
+    });
+
     test('endpoints include development stage headers and notices', async () => {
         const { req, res } = createMockReqRes('GET');
         await projectsHandler(req, res);

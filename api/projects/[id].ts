@@ -16,11 +16,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
 
-    const { id } = req.query;
+    let body = req.body;
+    if (typeof body === 'string') {
+        try {
+            body = JSON.parse(body);
+        } catch {
+            body = {};
+        }
+    }
+    body = body || {};
 
-    if (!id || typeof id !== 'string') {
+    const rawId = req.query?.id;
+    const id = (Array.isArray(rawId) ? rawId[0] : typeof rawId === 'string' ? rawId : undefined) ||
+               (typeof body.id === 'string' ? body.id : undefined);
+
+    if (!id || typeof id !== 'string' || !id.trim()) {
         return errorResponse(res, 400, 'Invalid or missing project id parameter', 'INVALID_ID');
     }
+    const cleanId = id.trim();
 
     try {
         if (req.method === 'GET') {
@@ -38,10 +51,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         GROUP BY p.id
       `;
 
-            const rows = await query(sql, [id]);
+            const rows = await query(sql, [cleanId]);
 
             if (rows.length === 0) {
-                return errorResponse(res, 404, `Project not found with id or slug: ${id}`, 'PROJECT_NOT_FOUND');
+                return errorResponse(res, 404, `Project not found with id or slug: ${cleanId}`, 'PROJECT_NOT_FOUND');
             }
 
             const r = rows[0];
@@ -63,11 +76,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'PATCH' || req.method === 'PUT') {
-            const body = req.body || {};
             const updates: string[] = [];
             const params: any[] = [];
 
-            if (body.status && ['active', 'in_review', 'archived'].includes(body.status)) {
+            if (body.status !== undefined) {
+                if (!['active', 'in_review', 'archived'].includes(body.status)) {
+                    return errorResponse(
+                        res,
+                        400,
+                        `Invalid project status: '${body.status}'. Allowed statuses: active, in_review, archived`,
+                        'INVALID_STATUS'
+                    );
+                }
                 params.push(body.status);
                 updates.push(`status = $${params.length}`);
             }
@@ -91,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return errorResponse(res, 400, 'No valid fields provided for update', 'NO_FIELDS_TO_UPDATE');
             }
 
-            params.push(id);
+            params.push(cleanId);
             const sql = `
         UPDATE projects
         SET ${updates.join(', ')}
@@ -107,7 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const rows = await query(sql, params);
 
             if (rows.length === 0) {
-                return errorResponse(res, 404, `Project not found with id: ${id}`, 'PROJECT_NOT_FOUND');
+                return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
             }
 
             const r = rows[0];
@@ -130,15 +150,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (req.method === 'DELETE') {
             const sql = `DELETE FROM projects WHERE id::text = $1 RETURNING id`;
-            const rows = await query(sql, [id]);
+            const rows = await query(sql, [cleanId]);
 
             if (rows.length === 0) {
-                return errorResponse(res, 404, `Project not found with id: ${id}`, 'PROJECT_NOT_FOUND');
+                return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
             }
 
             return jsonResponse(res, 200, {
                 success: true,
-                deletedId: id,
+                deletedId: cleanId,
                 message: 'Project and associated tasks deleted successfully',
             });
         }

@@ -142,7 +142,7 @@ class ApiClient {
     ): Promise<{ task: Task; message: string }> {
         return this.request<{ task: Task; message: string }>(`/api/tasks/${id}`, {
             method: 'PATCH',
-            body: JSON.stringify(updates),
+            body: JSON.stringify({ ...updates, id }),
         });
     }
 

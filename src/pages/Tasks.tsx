@@ -109,11 +109,11 @@ export const Tasks: React.FC = () => {
         }
     };
 
-    const toggleTaskStatus = async (taskId: string) => {
+    const updateTaskStatus = async (taskId: string, nextStatus: TaskStatus) => {
         const targetTask = tasks.find((t) => t.id === taskId);
-        if (!targetTask) return;
+        if (!targetTask || targetTask.status === nextStatus) return;
 
-        const nextStatus: TaskStatus = targetTask.status === 'done' ? 'todo' : 'done';
+        const previousStatus = targetTask.status;
 
         // Optimistic update
         setTasks((prev) =>
@@ -125,10 +125,18 @@ export const Tasks: React.FC = () => {
         } catch (err: any) {
             // Rollback on failure
             setTasks((prev) =>
-                prev.map((t) => (t.id === taskId ? { ...t, status: targetTask.status } : t))
+                prev.map((t) => (t.id === taskId ? { ...t, status: previousStatus } : t))
             );
             alert(`Failed to update task status: ${err.message}`);
         }
+    };
+
+    const toggleTaskStatus = async (taskId: string) => {
+        const targetTask = tasks.find((t) => t.id === taskId);
+        if (!targetTask) return;
+
+        const nextStatus: TaskStatus = targetTask.status === 'done' ? 'todo' : 'done';
+        await updateTaskStatus(taskId, nextStatus);
     };
 
     const handleDeleteTask = async (id: string, title: string) => {
@@ -370,9 +378,17 @@ export const Tasks: React.FC = () => {
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <span className="capitalize text-xs text-dev-textMuted">
-                                        {task.status.replace('_', ' ')}
-                                    </span>
+                                    <select
+                                        value={task.status}
+                                        onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                                        aria-label={`Update status for ${task.title}`}
+                                        className="h-6 px-1.5 text-xs bg-dev-bg border border-dev-border rounded text-dev-text capitalize focus:outline-none focus:border-dev-accent cursor-pointer hover:border-dev-borderHighlight transition-colors"
+                                    >
+                                        <option value="todo">Todo</option>
+                                        <option value="in_progress">In Progress</option>
+                                        <option value="review">Review</option>
+                                        <option value="done">Done</option>
+                                    </select>
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex items-center gap-2">
@@ -456,11 +472,24 @@ export const Tasks: React.FC = () => {
                                             </div>
                                             <div className="flex items-center justify-between pt-1 text-[11px] text-dev-textSubtle">
                                                 <span className="font-mono text-[10px]">{task.projectName}</span>
-                                                <img
-                                                    src={task.assignee?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'}
-                                                    alt={task.assignee?.name || 'Assignee'}
-                                                    className="w-4 h-4 rounded-full border border-dev-border"
-                                                />
+                                                <div className="flex items-center gap-2">
+                                                    <select
+                                                        value={task.status}
+                                                        onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                                                        aria-label={`Move status for ${task.title}`}
+                                                        className="h-5 px-1 text-[10px] bg-dev-bg border border-dev-border rounded text-dev-textSubtle capitalize focus:outline-none focus:border-dev-accent cursor-pointer hover:border-dev-borderHighlight"
+                                                    >
+                                                        <option value="todo">Todo</option>
+                                                        <option value="in_progress">In Progress</option>
+                                                        <option value="review">Review</option>
+                                                        <option value="done">Done</option>
+                                                    </select>
+                                                    <img
+                                                        src={task.assignee?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'}
+                                                        alt={task.assignee?.name || 'Assignee'}
+                                                        className="w-4 h-4 rounded-full border border-dev-border"
+                                                    />
+                                                </div>
                                             </div>
                                         </Card>
                                     ))}
