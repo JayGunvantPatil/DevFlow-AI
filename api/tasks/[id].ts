@@ -1,4 +1,4 @@
-import { query, DatabaseNotConfiguredError } from '../_utils/db';
+import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
 import {
     VercelRequest,
     VercelResponse,
@@ -6,7 +6,7 @@ import {
     errorResponse,
     methodNotAllowedResponse,
     handleCors,
-} from '../_utils/response';
+} from '../_utils/response.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (handleCors(req, res, ['GET', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'])) {

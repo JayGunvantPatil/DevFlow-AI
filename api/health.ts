@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { sendJson, sendError } from './_utils/response';
-import { pingDatabase } from './_utils/db';
+import { sendJson, sendError } from './_utils/response.js';
+import { pingDatabase } from './_utils/db.js';
 
 export interface ServiceStatus {
     database: string;

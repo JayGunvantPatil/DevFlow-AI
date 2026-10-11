@@ -1,5 +1,5 @@
-import { query, DatabaseNotConfiguredError } from '../_utils/db';
-import { validateTaskInput } from '../_utils/validate';
+import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
+import { validateTaskInput } from '../_utils/validate.js';
 import {
     VercelRequest,
     VercelResponse,
@@ -8,7 +8,7 @@ import {
     validationErrorResponse,
     methodNotAllowedResponse,
     handleCors,
-} from '../_utils/response';
+} from '../_utils/response.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (handleCors(req, res, ['GET', 'POST', 'OPTIONS'])) {
