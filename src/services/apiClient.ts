@@ -1,4 +1,4 @@
-import { HealthResponse, Project, Task } from '../types';
+import { HealthResponse, Project, ProjectStatus, Task } from '../types';
 
 export class ApiError extends Error {
     code?: string;
@@ -95,6 +95,21 @@ class ApiClient {
         return this.request<{ project: Project; message: string }>('/api/projects', {
             method: 'POST',
             body: JSON.stringify(payload),
+        });
+    }
+
+    async updateProject(
+        id: string,
+        updates: {
+            name?: string;
+            description?: string;
+            status?: ProjectStatus;
+            tags?: string[];
+        }
+    ): Promise<{ project: Project; message: string }> {
+        return this.request<{ project: Project; message: string }>(`/api/projects/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ...updates, id }),
         });
     }
 

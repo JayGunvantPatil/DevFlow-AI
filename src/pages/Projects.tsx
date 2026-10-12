@@ -8,6 +8,9 @@ import {
     RefreshCw,
     AlertCircle,
     Trash2,
+    Edit2,
+    MoreVertical,
+    AlertTriangle,
 } from 'lucide-react';
 import { Project, ProjectStatus } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -26,16 +29,44 @@ export const Projects: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | ProjectStatus>('all');
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [formError, setFormError] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
 
-    // Form State
+    // Create Modal State
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [isCreateSubmitting, setIsCreateSubmitting] = useState(false);
+    const [createFormError, setCreateFormError] = useState<string | null>(null);
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [newTags, setNewTags] = useState('TypeScript, React');
     const [newStatus, setNewStatus] = useState<ProjectStatus>('active');
+
+    // Edit Modal State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingProject, setEditingProject] = useState<Project | null>(null);
+    const [editName, setEditName] = useState('');
+    const [editDesc, setEditDesc] = useState('');
+    const [editTags, setEditTags] = useState('');
+    const [editStatus, setEditStatus] = useState<ProjectStatus>('active');
+    const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+    const [editFormError, setEditFormError] = useState<string | null>(null);
+
+    // Three-dot Dropdown State
+    const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+    // Delete Confirmation Dialog State
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (activeMenuId && !(e.target as HTMLElement).closest('.project-menu-container')) {
+                setActiveMenuId(null);
+            }
+        };
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, [activeMenuId]);
 
     const fetchProjects = useCallback(async () => {
         setIsLoading(true);
@@ -60,10 +91,14 @@ export const Projects: React.FC = () => {
 
     const handleCreateProject = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newName.trim()) return;
+        const trimmedName = newName.trim();
+        if (!trimmedName) {
+            setCreateFormError('Project name is required');
+            return;
+        }
 
-        setIsSubmitting(true);
-        setFormError(null);
+        setIsCreateSubmitting(true);
+        setCreateFormError(null);
 
         try {
             const tagsArray = newTags
@@ -72,36 +107,109 @@ export const Projects: React.FC = () => {
                 .filter(Boolean);
 
             const res = await apiClient.createProject({
-                name: newName.trim(),
+                name: trimmedName,
                 description: newDesc.trim(),
                 status: newStatus as any,
                 tags: tagsArray,
             });
 
             setProjects((prev) => [res.project, ...prev]);
-            setIsModalOpen(false);
+            setIsCreateModalOpen(false);
             setNewName('');
             setNewDesc('');
             setNewTags('TypeScript, React');
         } catch (err: any) {
-            setFormError(err.message || 'Failed to create project');
+            setCreateFormError(err.message || 'Failed to create project');
         } finally {
-            setIsSubmitting(false);
+            setIsCreateSubmitting(false);
         }
     };
 
-    const handleDeleteProject = async (id: string, name: string) => {
-        if (!window.confirm(`Are you sure you want to delete project "${name}" and all its linked tasks?`)) {
+    const handleOpenEditModal = (project: Project) => {
+        setEditingProject(project);
+        setEditName(project.name);
+        setEditDesc(project.description || '');
+        setEditTags(Array.isArray(project.tags) ? project.tags.join(', ') : '');
+        setEditStatus(project.status || 'active');
+        setEditFormError(null);
+        setIsEditModalOpen(true);
+    };
+
+    const handleCloseEditModal = () => {
+        setIsEditModalOpen(false);
+        setEditingProject(null);
+        setEditFormError(null);
+    };
+
+    const handleSaveEditProject = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingProject) return;
+
+        const trimmedName = editName.trim();
+        if (!trimmedName) {
+            setEditFormError('Project name is required');
             return;
         }
-        setDeletingId(id);
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            setEditFormError('Project name must be between 2 and 100 characters');
+            return;
+        }
+
+        setIsEditSubmitting(true);
+        setEditFormError(null);
+
         try {
-            await apiClient.deleteProject(id);
-            setProjects((prev) => prev.filter((p) => p.id !== id));
+            const tagsArray = editTags
+                .split(',')
+                .map((t) => t.trim())
+                .filter(Boolean);
+
+            const res = await apiClient.updateProject(editingProject.id, {
+                name: trimmedName,
+                description: editDesc.trim(),
+                status: editStatus,
+                tags: tagsArray,
+            });
+
+            // Update in local state without full reload
+            setProjects((prev) =>
+                prev.map((p) =>
+                    p.id === editingProject.id
+                        ? {
+                            ...p,
+                            ...res.project,
+                            openTasksCount: res.project.openTasksCount ?? p.openTasksCount,
+                        }
+                        : p
+                )
+            );
+
+            setIsEditModalOpen(false);
+            setEditingProject(null);
         } catch (err: any) {
-            alert(`Failed to delete project: ${err.message}`);
+            setEditFormError(err.message || 'Failed to update project');
         } finally {
-            setDeletingId(null);
+            setIsEditSubmitting(false);
+        }
+    };
+
+    const handleOpenDeleteDialog = (project: Project) => {
+        setProjectToDelete(project);
+        setDeleteError(null);
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!projectToDelete) return;
+        setIsDeleting(true);
+        setDeleteError(null);
+        try {
+            await apiClient.deleteProject(projectToDelete.id);
+            setProjects((prev) => prev.filter((p) => p.id !== projectToDelete.id));
+            setProjectToDelete(null);
+        } catch (err: any) {
+            setDeleteError(err.message || 'Failed to delete project');
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -154,8 +262,8 @@ export const Projects: React.FC = () => {
                         size="md"
                         icon={Plus}
                         onClick={() => {
-                            setFormError(null);
-                            setIsModalOpen(true);
+                            setCreateFormError(null);
+                            setIsCreateModalOpen(true);
                         }}
                     >
                         New Project
@@ -228,8 +336,8 @@ export const Projects: React.FC = () => {
                         label: 'Create Project',
                         icon: Plus,
                         onClick: () => {
-                            setFormError(null);
-                            setIsModalOpen(true);
+                            setCreateFormError(null);
+                            setIsCreateModalOpen(true);
                         },
                     }}
                 />
@@ -259,14 +367,62 @@ export const Projects: React.FC = () => {
                                         >
                                             {project.status.replace('_', ' ')}
                                         </Badge>
+
+                                        {/* Direct Edit Icon Button */}
                                         <button
-                                            onClick={() => handleDeleteProject(project.id, project.name)}
-                                            disabled={deletingId === project.id}
-                                            title="Delete project"
-                                            className="p-1 text-dev-textSubtle hover:text-dev-red opacity-0 group-hover:opacity-100 transition-opacity"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenEditModal(project);
+                                            }}
+                                            title="Edit project"
+                                            aria-label={`Edit ${project.name}`}
+                                            className="p-1 rounded text-dev-textSubtle hover:text-dev-heading hover:bg-dev-surfaceHover transition-colors"
                                         >
-                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <Edit2 className="w-3.5 h-3.5" />
                                         </button>
+
+                                        {/* Three-dot Action Menu */}
+                                        <div className="relative project-menu-container">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActiveMenuId(activeMenuId === project.id ? null : project.id);
+                                                }}
+                                                title="Project actions"
+                                                aria-label={`Actions for ${project.name}`}
+                                                className="p-1 rounded text-dev-textSubtle hover:text-dev-heading hover:bg-dev-surfaceHover transition-colors"
+                                            >
+                                                <MoreVertical className="w-3.5 h-3.5" />
+                                            </button>
+
+                                            {activeMenuId === project.id && (
+                                                <div
+                                                    className="absolute right-0 top-full mt-1 w-36 py-1 bg-dev-surface border border-dev-border rounded-md shadow-xl z-20 text-xs"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <button
+                                                        onClick={() => {
+                                                            setActiveMenuId(null);
+                                                            handleOpenEditModal(project);
+                                                        }}
+                                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-dev-text hover:text-dev-heading hover:bg-dev-subtle transition-colors"
+                                                    >
+                                                        <Edit2 className="w-3.5 h-3.5 text-dev-accent" />
+                                                        <span>Edit Project</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setActiveMenuId(null);
+                                                            handleOpenDeleteDialog(project);
+                                                        }}
+                                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-dev-red hover:bg-dev-red/10 transition-colors"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                        <span>Delete Project</span>
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
@@ -315,8 +471,8 @@ export const Projects: React.FC = () => {
 
             {/* Create Project Modal */}
             <Modal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
                 title="Create New Project"
                 description="Persist a new developer workspace directly to Neon PostgreSQL"
                 footer={
@@ -324,15 +480,15 @@ export const Projects: React.FC = () => {
                         <Button
                             variant="ghost"
                             size="sm"
-                            disabled={isSubmitting}
-                            onClick={() => setIsModalOpen(false)}
+                            disabled={isCreateSubmitting}
+                            onClick={() => setIsCreateModalOpen(false)}
                         >
                             Cancel
                         </Button>
                         <Button
                             variant="primary"
                             size="sm"
-                            loading={isSubmitting}
+                            loading={isCreateSubmitting}
                             onClick={handleCreateProject}
                         >
                             Save Project
@@ -341,10 +497,10 @@ export const Projects: React.FC = () => {
                 }
             >
                 <form onSubmit={handleCreateProject} className="space-y-4 text-xs">
-                    {formError && (
+                    {createFormError && (
                         <div className="p-2.5 rounded bg-dev-surface border border-dev-red/30 text-dev-red text-xs flex items-center gap-2">
                             <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                            <span>{formError}</span>
+                            <span>{createFormError}</span>
                         </div>
                     )}
 
@@ -408,6 +564,164 @@ export const Projects: React.FC = () => {
                         </div>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Edit Project Modal */}
+            <Modal
+                isOpen={isEditModalOpen}
+                onClose={handleCloseEditModal}
+                title="Edit Project"
+                description={`Modify workspace details for "${editingProject?.name || ''}"`}
+                footer={
+                    <>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isEditSubmitting}
+                            onClick={handleCloseEditModal}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            loading={isEditSubmitting}
+                            onClick={handleSaveEditProject}
+                        >
+                            Save Changes
+                        </Button>
+                    </>
+                }
+            >
+                <form onSubmit={handleSaveEditProject} className="space-y-4 text-xs">
+                    {editFormError && (
+                        <div className="p-2.5 rounded bg-dev-surface border border-dev-red/30 text-dev-red text-xs flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                            <span>{editFormError}</span>
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="block text-xs font-medium text-dev-heading mb-1">
+                            Project Name <span className="text-dev-red">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            required
+                            placeholder="e.g. auth-gateway, semantic-parser"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="w-full h-8 px-3 rounded-md bg-dev-bg border border-dev-border text-dev-text placeholder-dev-textSubtle focus:outline-none focus:border-dev-accent"
+                        />
+                        <span className="text-[10px] text-dev-textSubtle mt-0.5 block">
+                            Unique name for your workspace in Neon PostgreSQL.
+                        </span>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-dev-heading mb-1">
+                            Description
+                        </label>
+                        <textarea
+                            rows={3}
+                            placeholder="Provide a concise summary of the module or service purpose."
+                            value={editDesc}
+                            onChange={(e) => setEditDesc(e.target.value)}
+                            className="w-full p-2.5 rounded-md bg-dev-bg border border-dev-border text-dev-text placeholder-dev-textSubtle focus:outline-none focus:border-dev-accent"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-medium text-dev-heading mb-1">
+                                Tags (comma separated)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="TypeScript, Rust, Docker"
+                                value={editTags}
+                                onChange={(e) => setEditTags(e.target.value)}
+                                className="w-full h-8 px-3 rounded-md bg-dev-bg border border-dev-border text-dev-text placeholder-dev-textSubtle focus:outline-none focus:border-dev-accent"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-medium text-dev-heading mb-1">
+                                Status
+                            </label>
+                            <select
+                                value={editStatus}
+                                onChange={(e) => setEditStatus(e.target.value as ProjectStatus)}
+                                className="w-full h-8 px-2.5 rounded-md bg-dev-bg border border-dev-border text-dev-text focus:outline-none focus:border-dev-accent"
+                            >
+                                <option value="active">Active</option>
+                                <option value="in_review">In Review</option>
+                                <option value="archived">Archived</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Delete Project Confirmation Modal */}
+            <Modal
+                isOpen={!!projectToDelete}
+                onClose={() => !isDeleting && setProjectToDelete(null)}
+                title="Delete Project"
+                description={`Are you sure you want to delete "${projectToDelete?.name}"?`}
+                footer={
+                    <>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isDeleting}
+                            onClick={() => setProjectToDelete(null)}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="danger"
+                            size="sm"
+                            loading={isDeleting}
+                            onClick={handleConfirmDelete}
+                        >
+                            Delete Project
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-3 text-xs">
+                    {deleteError && (
+                        <div className="p-2.5 rounded bg-dev-surface border border-dev-red/30 text-dev-red text-xs flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                            <span>{deleteError}</span>
+                        </div>
+                    )}
+
+                    <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-start gap-2.5">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+                        <div className="space-y-1">
+                            <p className="font-semibold text-amber-200">Database Cascade Notice</p>
+                            <p className="leading-relaxed">
+                                {projectToDelete?.openTasksCount && projectToDelete.openTasksCount > 0 ? (
+                                    <>
+                                        This project currently has <strong className="text-white">{projectToDelete.openTasksCount} active task(s)</strong>.
+                                        Deleting this project will permanently remove it along with all linked tasks from Neon PostgreSQL.
+                                    </>
+                                ) : (
+                                    <>
+                                        Deleting this project will permanently remove it from Neon PostgreSQL.
+                                        Any associated tasks will also be removed.
+                                    </>
+                                )}
+                            </p>
+                        </div>
+                    </div>
+
+                    <p className="text-dev-textMuted">
+                        This action cannot be undone. Please confirm you wish to delete this project workspace.
+                    </p>
+                </div>
             </Modal>
         </div>
     );

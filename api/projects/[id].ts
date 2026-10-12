@@ -79,6 +79,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const updates: string[] = [];
             const params: any[] = [];
 
+            if (body.name !== undefined) {
+                const name = typeof body.name === 'string' ? body.name.trim() : '';
+                if (!name || name.length < 2 || name.length > 100) {
+                    return errorResponse(res, 400, 'Project name must be between 2 and 100 characters', 'INVALID_NAME');
+                }
+                if (!/^[a-zA-Z0-9-_\s.]+$/.test(name)) {
+                    return errorResponse(res, 400, 'Project name contains invalid characters. Use letters, numbers, dashes, or dots', 'INVALID_NAME');
+                }
+                const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                params.push(name);
+                updates.push(`name = $${params.length}`);
+                params.push(slug);
+                updates.push(`slug = $${params.length}`);
+            }
+
             if (body.status !== undefined) {
                 if (!['active', 'in_review', 'archived'].includes(body.status)) {
                     return errorResponse(
@@ -92,19 +107,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 updates.push(`status = $${params.length}`);
             }
 
-            if (typeof body.description === 'string') {
-                params.push(body.description.trim());
+            if (body.description !== undefined) {
+                const desc = typeof body.description === 'string' ? body.description.trim() : '';
+                if (desc.length > 1000) {
+                    return errorResponse(res, 400, 'Description cannot exceed 1000 characters', 'INVALID_DESCRIPTION');
+                }
+                params.push(desc);
                 updates.push(`description = $${params.length}`);
             }
 
-            if (Array.isArray(body.tags)) {
-                params.push(body.tags);
+            if (body.tags !== undefined) {
+                let tagsArray: string[] = [];
+                if (Array.isArray(body.tags)) {
+                    tagsArray = body.tags.map((t: any) => String(t).trim()).filter(Boolean);
+                } else if (typeof body.tags === 'string') {
+                    tagsArray = body.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+                }
+                params.push(tagsArray);
                 updates.push(`tags = $${params.length}`);
             }
 
             if (typeof body.stars === 'number' && body.stars >= 0) {
                 params.push(body.stars);
                 updates.push(`stars = $${params.length}`);
+            }
+
+            if (typeof body.leadName === 'string' && body.leadName.trim()) {
+                params.push(body.leadName.trim().slice(0, 100));
+                updates.push(`lead_name = $${params.length}`);
+            }
+
+            if (typeof body.leadAvatar === 'string' && body.leadAvatar.trim()) {
+                params.push(body.leadAvatar.trim());
+                updates.push(`lead_avatar = $${params.length}`);
             }
 
             if (updates.length === 0) {
@@ -130,6 +165,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
             }
 
+            const countRes = await query<{ count: number }>(
+                'SELECT COALESCE(COUNT(id) FILTER (WHERE status != \'done\'), 0)::int AS count FROM tasks WHERE project_id::text = $1',
+                [cleanId]
+            );
+            const openTasksCount = countRes[0]?.count ?? 0;
+
             const r = rows[0];
             return jsonResponse(res, 200, {
                 project: {
@@ -141,6 +182,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     stars: r.stars,
                     tags: r.tags,
                     lead: { name: r.leadName, avatar: r.leadAvatar },
+                    openTasksCount,
                     createdAt: r.createdAt,
                     updatedAt: r.updatedAt,
                 },
@@ -171,6 +213,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 message: error.message,
                 code: 'DATABASE_NOT_CONFIGURED',
             });
+        }
+
+        if (error.code === '23505') {
+            return errorResponse(res, 409, 'A project with this name already exists', 'PROJECT_NAME_EXISTS');
         }
 
         console.error(`Project [id] API error:`, error);

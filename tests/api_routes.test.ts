@@ -195,6 +195,23 @@ describe('API Route Handlers Integration', () => {
         assert.equal(res._getBody().error.code, 'INVALID_STATUS');
     });
 
+    test('projectDetailHandler returns 400 when PATCH has invalid project name', async () => {
+        const { req, res } = createMockReqRes('PATCH', { name: 'x' }, { id: 'proj-1' });
+        await projectDetailHandler(req, res);
+
+        assert.equal(res._getStatusCode(), 400);
+        assert.equal(res._getBody().error.code, 'INVALID_NAME');
+    });
+
+    test('projectDetailHandler reaches DB query with valid update payload', async () => {
+        const { req, res } = createMockReqRes('PATCH', { name: 'Valid Project', tags: ['React', 'Next'] }, { id: 'proj-1' });
+        await projectDetailHandler(req, res);
+
+        // Database URL unset in beforeEach, so it reaches DB query and returns 503
+        assert.equal(res._getStatusCode(), 503);
+        assert.equal(res._getBody().code, 'DATABASE_NOT_CONFIGURED');
+    });
+
     test('endpoints include development stage headers and notices', async () => {
         const { req, res } = createMockReqRes('GET');
         await projectsHandler(req, res);
