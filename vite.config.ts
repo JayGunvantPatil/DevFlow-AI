@@ -110,15 +110,32 @@ export default defineConfig(({ mode }) => {
                                 return;
                             }
 
-                            // Route 6: /api/auth/:action (register, login, me, logout)
-                            const authMatch = pathname.match(/^\/api\/auth\/([^/]+)$/);
-                            if (authMatch) {
-                                const action = authMatch[1];
-                                if (['register', 'login', 'me', 'logout'].includes(action)) {
-                                    const authHandler = (await import(`./api/auth/${action}`)).default;
-                                    await authHandler(vercelReq, vercelRes);
-                                    return;
-                                }
+                            // Route 6: /api/auth/register
+                            if (pathname === '/api/auth/register') {
+                                const registerHandler = (await import('./api/auth/register')).default;
+                                await registerHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 7: /api/auth/login
+                            if (pathname === '/api/auth/login') {
+                                const loginHandler = (await import('./api/auth/login')).default;
+                                await loginHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 8: /api/auth/me
+                            if (pathname === '/api/auth/me') {
+                                const meHandler = (await import('./api/auth/me')).default;
+                                await meHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 9: /api/auth/logout
+                            if (pathname === '/api/auth/logout') {
+                                const logoutHandler = (await import('./api/auth/logout')).default;
+                                await logoutHandler(vercelReq, vercelRes);
+                                return;
                             }
 
                             next();
