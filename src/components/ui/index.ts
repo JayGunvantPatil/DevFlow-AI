@@ -6,3 +6,4 @@ export * from './Table';
 export * from './EmptyState';
 export * from './LoadingIndicator';
 export * from './DiffViewer';
+export * from './ErrorBoundary';

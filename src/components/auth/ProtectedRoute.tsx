@@ -1,5 +1,5 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Lock, LogIn, Sparkles } from 'lucide-react';
 
@@ -52,5 +52,6 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
         );
     }
 
-    return children ? <>{children}</> : <Outlet />;
+    const outletContext = useOutletContext();
+    return children ? <>{children}</> : <Outlet context={outletContext} />;
 };

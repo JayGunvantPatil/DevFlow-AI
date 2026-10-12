@@ -24,12 +24,22 @@ import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 
 interface DashboardContext {
-    health: HealthCheckResult;
-    onRefreshHealth: () => void;
+    health?: HealthCheckResult;
+    onRefreshHealth?: () => void;
 }
 
+const defaultHealth: HealthCheckResult = {
+    data: null,
+    latencyMs: null,
+    error: null,
+    loading: false,
+    lastChecked: null,
+};
+
 export const Dashboard: React.FC = () => {
-    const { health, onRefreshHealth } = useOutletContext<DashboardContext>();
+    const outletContext = useOutletContext<DashboardContext | undefined>();
+    const health = outletContext?.health || defaultHealth;
+    const onRefreshHealth = outletContext?.onRefreshHealth || (() => {});
     const [projects, setProjects] = useState<Project[]>(initialProjects);
     const [tasks, setTasks] = useState<Task[]>(initialTasks);
     const [showGithubModal, setShowGithubModal] = useState(false);
