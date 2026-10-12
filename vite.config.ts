@@ -110,6 +110,17 @@ export default defineConfig(({ mode }) => {
                                 return;
                             }
 
+                            // Route 6: /api/auth/:action (register, login, me, logout)
+                            const authMatch = pathname.match(/^\/api\/auth\/([^/]+)$/);
+                            if (authMatch) {
+                                const action = authMatch[1];
+                                if (['register', 'login', 'me', 'logout'].includes(action)) {
+                                    const authHandler = (await import(`./api/auth/${action}`)).default;
+                                    await authHandler(vercelReq, vercelRes);
+                                    return;
+                                }
+                            }
+
                             next();
                         } catch (err: any) {
                             console.error('API middleware error:', err);

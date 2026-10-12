@@ -1,4 +1,5 @@
-import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
+import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
+import { extractUserFromRequest } from '../_utils/auth.js';
 import {
     VercelRequest,
     VercelResponse,
@@ -15,6 +16,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+
+    // Extract authenticated user if token present
+    const authUser = extractUserFromRequest(req);
+    if (req.headers?.authorization && !authUser) {
+        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
 
     let body = req.body;
     if (typeof body === 'string') {
@@ -36,7 +43,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const cleanId = id.trim();
 
     try {
+        const hasUserCol = await checkHasUserIdColumn();
+
         if (req.method === 'GET') {
+            const params: any[] = [cleanId];
+            let userClause = '';
+
+            if (hasUserCol) {
+                if (authUser) {
+                    params.push(authUser.userId);
+                    userClause = `AND p.user_id = $${params.length}`;
+                } else {
+                    params.push('a0000000-0000-0000-0000-000000000001');
+                    userClause = `AND (p.user_id = $${params.length} OR p.user_id IS NULL)`;
+                }
+            }
+
             const sql = `
         SELECT 
           p.id, p.name, p.slug, p.description, p.status, p.stars, p.tags,
@@ -47,11 +69,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           COALESCE(COUNT(t.id) FILTER (WHERE t.status != 'done'), 0)::int AS "openTasksCount"
         FROM projects p
         LEFT JOIN tasks t ON t.project_id = p.id
-        WHERE p.id::text = $1 OR p.slug = $1
+        WHERE (p.id::text = $1 OR p.slug = $1) ${userClause}
         GROUP BY p.id
       `;
 
-            const rows = await query(sql, [cleanId]);
+            const rows = await query(sql, params);
 
             if (rows.length === 0) {
                 return errorResponse(res, 404, `Project not found with id or slug: ${cleanId}`, 'PROJECT_NOT_FOUND');
@@ -147,10 +169,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             params.push(cleanId);
+            const idPlaceholder = `$${params.length}`;
+            let userWhereClause = '';
+
+            if (hasUserCol) {
+                if (authUser) {
+                    params.push(authUser.userId);
+                    userWhereClause = `AND user_id = $${params.length}`;
+                } else {
+                    params.push('a0000000-0000-0000-0000-000000000001');
+                    userWhereClause = `AND (user_id = $${params.length} OR user_id IS NULL)`;
+                }
+            }
+
             const sql = `
         UPDATE projects
         SET ${updates.join(', ')}
-        WHERE id::text = $${params.length}
+        WHERE id::text = ${idPlaceholder} ${userWhereClause}
         RETURNING 
           id, name, slug, description, status, stars, tags,
           lead_name AS "leadName",
@@ -191,8 +226,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'DELETE') {
-            const sql = `DELETE FROM projects WHERE id::text = $1 RETURNING id`;
-            const rows = await query(sql, [cleanId]);
+            const params: any[] = [cleanId];
+            let userWhere = '';
+
+            if (hasUserCol) {
+                if (authUser) {
+                    params.push(authUser.userId);
+                    userWhere = `AND user_id = $${params.length}`;
+                } else {
+                    params.push('a0000000-0000-0000-0000-000000000001');
+                    userWhere = `AND (user_id = $${params.length} OR user_id IS NULL)`;
+                }
+            }
+
+            const sql = `DELETE FROM projects WHERE id::text = $1 ${userWhere} RETURNING id`;
+            const rows = await query(sql, params);
 
             if (rows.length === 0) {
                 return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');

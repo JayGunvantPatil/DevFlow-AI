@@ -17,9 +17,14 @@ import {
     X,
     Activity,
     Terminal,
+    LogIn,
+    LogOut,
+    ChevronDown,
 } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
 import { HealthCheckResult } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { AuthModal } from '../components/auth/AuthModal';
 
 interface NavItem {
     name: string;
@@ -90,9 +95,11 @@ const routeMetadata: Record<string, { title: string; description: string; breadc
 };
 
 export const AppLayout: React.FC = () => {
+    const { user, isAuthenticated, logout, openAuthModal } = useAuth();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [showNotifications, setShowNotifications] = useState(false);
+    const [userMenuOpen, setUserMenuOpen] = useState(false);
     const [health, setHealth] = useState<HealthCheckResult>({
         data: null,
         latencyMs: null,
@@ -338,17 +345,73 @@ export const AppLayout: React.FC = () => {
                             )}
                         </div>
 
-                        {/* User Avatar & Menu */}
-                        <div className="flex items-center gap-2 pl-2 border-l border-dev-border">
-                            <img
-                                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"
-                                alt="User Avatar"
-                                className="w-7 h-7 rounded-full border border-dev-border object-cover"
-                            />
-                            <div className="hidden lg:block text-left">
-                                <span className="block text-xs font-medium text-dev-heading leading-tight">Sofia Chen</span>
-                                <span className="block text-[10px] text-dev-textSubtle leading-tight">Lead Architect</span>
-                            </div>
+                        {/* User Authentication Menu */}
+                        <div className="relative pl-2 border-l border-dev-border">
+                            {isAuthenticated && user ? (
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setUserMenuOpen(!userMenuOpen)}
+                                        className="flex items-center gap-2 p-1 rounded-md hover:bg-dev-surfaceHover transition-colors text-left cursor-pointer"
+                                        aria-label="User account menu"
+                                    >
+                                        <img
+                                            src={user.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.email)}`}
+                                            alt={user.name}
+                                            className="w-7 h-7 rounded-full border border-dev-border object-cover bg-dev-subtle"
+                                        />
+                                        <div className="hidden lg:block text-left">
+                                            <span className="block text-xs font-medium text-dev-heading leading-tight truncate max-w-[120px]">
+                                                {user.name}
+                                            </span>
+                                            <span className="block text-[10px] text-dev-textSubtle leading-tight capitalize">
+                                                {user.role === 'lead' ? 'Lead Architect' : user.role === 'admin' ? 'Workspace Admin' : 'Developer'}
+                                            </span>
+                                        </div>
+                                        <ChevronDown className="w-3 h-3 text-dev-textSubtle hidden lg:block" />
+                                    </button>
+
+                                    {/* User Menu Dropdown */}
+                                    {userMenuOpen && (
+                                        <div className="absolute right-0 mt-2 w-56 bg-dev-surface border border-dev-border rounded-lg shadow-dev-modal p-2 z-50 text-xs animate-in fade-in duration-100">
+                                            <div className="px-3 py-2 border-b border-dev-border/60 mb-1">
+                                                <p className="font-semibold text-dev-heading truncate">{user.name}</p>
+                                                <p className="text-[11px] text-dev-textSubtle truncate font-mono">{user.email}</p>
+                                                <span className="inline-block mt-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-dev-subtle border border-dev-border text-dev-accent capitalize">
+                                                    {user.role}
+                                                </span>
+                                            </div>
+
+                                            <NavLink
+                                                to="/settings"
+                                                onClick={() => setUserMenuOpen(false)}
+                                                className="w-full px-3 py-2 rounded flex items-center gap-2 text-dev-text hover:text-dev-heading hover:bg-dev-subtle transition-colors"
+                                            >
+                                                <Settings className="w-3.5 h-3.5 text-dev-textSubtle" />
+                                                <span>Settings</span>
+                                            </NavLink>
+
+                                            <button
+                                                onClick={async () => {
+                                                    setUserMenuOpen(false);
+                                                    await logout();
+                                                }}
+                                                className="w-full px-3 py-2 rounded flex items-center gap-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-colors text-left cursor-pointer"
+                                            >
+                                                <LogOut className="w-3.5 h-3.5 text-red-400" />
+                                                <span>Sign Out</span>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => openAuthModal('login')}
+                                    className="px-3 py-1.5 rounded-md bg-dev-accent hover:bg-dev-accentHover text-dev-bg font-medium text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                                >
+                                    <LogIn className="w-3.5 h-3.5" />
+                                    <span>Sign In</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </header>
@@ -380,6 +443,9 @@ export const AppLayout: React.FC = () => {
                     <Outlet context={{ health, onRefreshHealth: fetchHealthStatus }} />
                 </main>
             </div>
+
+            {/* Authentication Modal */}
+            <AuthModal />
         </div>
     );
 };

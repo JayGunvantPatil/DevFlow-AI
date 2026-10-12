@@ -1,5 +1,6 @@
-import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
+import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
 import { validateProjectInput } from '../_utils/validate.js';
+import { extractUserFromRequest } from '../_utils/auth.js';
 import projectDetailHandler from './[id].js';
 import {
     VercelRequest,
@@ -16,9 +17,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    // Development-stage header as requested
+    // Set stage headers
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+
+    // Extract authenticated user if token present
+    const authUser = extractUserFromRequest(req);
+    if (req.headers?.authorization && !authUser) {
+        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
 
     // If request has project id, delegate to projectDetailHandler
     if ((req.method === 'DELETE' || req.method === 'PATCH' || req.method === 'PUT') && (req.query?.id || (req.body && req.body.id))) {
@@ -29,12 +36,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        const hasUserCol = await checkHasUserIdColumn();
+
         if (req.method === 'GET') {
             const { status, search, tag } = req.query;
 
             // Construct parameterized query safely
             const conditions: string[] = [];
             const params: any[] = [];
+
+            // User isolation scoping
+            if (hasUserCol) {
+                if (authUser) {
+                    params.push(authUser.userId);
+                    conditions.push(`p.user_id = $${params.length}`);
+                } else {
+                    // Fallback in unauthenticated dev/test mode to migration user or unassigned projects
+                    params.push('a0000000-0000-0000-0000-000000000001');
+                    conditions.push(`(p.user_id = $${params.length} OR p.user_id IS NULL)`);
+                }
+            }
 
             if (status && typeof status === 'string' && status !== 'all') {
                 params.push(status);
@@ -116,20 +137,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             const { name, slug, description, status, tags, leadName, leadAvatar } = validation.data;
+            const targetUserId = authUser?.userId || 'a0000000-0000-0000-0000-000000000001';
 
-            // Parameterized INSERT query
-            const sql = `
-        INSERT INTO projects (name, slug, description, status, tags, lead_name, lead_avatar)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING 
-          id, name, slug, description, status, stars, tags,
-          lead_name AS "leadName",
-          lead_avatar AS "leadAvatar",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt"
-      `;
+            let sql: string;
+            let params: any[];
 
-            const rows = await query(sql, [name, slug, description, status, tags, leadName, leadAvatar]);
+            if (hasUserCol) {
+                sql = `
+          INSERT INTO projects (name, slug, description, status, tags, lead_name, lead_avatar, user_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING 
+            id, name, slug, description, status, stars, tags,
+            lead_name AS "leadName",
+            lead_avatar AS "leadAvatar",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        `;
+                params = [name, slug, description, status, tags, leadName, leadAvatar, targetUserId];
+            } else {
+                sql = `
+          INSERT INTO projects (name, slug, description, status, tags, lead_name, lead_avatar)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING 
+            id, name, slug, description, status, stars, tags,
+            lead_name AS "leadName",
+            lead_avatar AS "leadAvatar",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        `;
+                params = [name, slug, description, status, tags, leadName, leadAvatar];
+            }
+
+            const rows = await query(sql, params);
             const created = rows[0];
 
             return jsonResponse(res, 201, {

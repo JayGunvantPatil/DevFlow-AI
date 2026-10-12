@@ -177,3 +177,96 @@ export function validateTaskInput(input: any): ValidationResult<ValidatedTaskInp
         },
     };
 }
+
+export interface ValidatedRegisterInput {
+    name: string;
+    email: string;
+    password: string;
+}
+
+export interface ValidatedLoginInput {
+    email: string;
+    password: string;
+}
+
+/**
+ * Validates and sanitizes a user registration payload.
+ */
+export function validateRegisterInput(input: any): ValidationResult<ValidatedRegisterInput> {
+    const errors: string[] = [];
+
+    if (!input || typeof input !== 'object') {
+        return { isValid: false, errors: ['Request body must be a valid JSON object'] };
+    }
+
+    // Name
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (!name) {
+        errors.push('Full name is required');
+    } else if (name.length < 2 || name.length > 100) {
+        errors.push('Full name must be between 2 and 100 characters');
+    }
+
+    // Email
+    const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email) {
+        errors.push('Email address is required');
+    } else if (!emailRegex.test(email) || email.length > 255) {
+        errors.push('Please provide a valid email address');
+    }
+
+    // Password
+    const password = typeof input.password === 'string' ? input.password : '';
+    if (!password) {
+        errors.push('Password is required');
+    } else if (password.length < 8) {
+        errors.push('Password must be at least 8 characters long');
+    } else if (password.length > 100) {
+        errors.push('Password cannot exceed 100 characters');
+    }
+
+    if (errors.length > 0) {
+        return { isValid: false, errors };
+    }
+
+    return {
+        isValid: true,
+        errors: [],
+        data: { name, email, password },
+    };
+}
+
+/**
+ * Validates and sanitizes a user login payload.
+ */
+export function validateLoginInput(input: any): ValidationResult<ValidatedLoginInput> {
+    const errors: string[] = [];
+
+    if (!input || typeof input !== 'object') {
+        return { isValid: false, errors: ['Request body must be a valid JSON object'] };
+    }
+
+    const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email) {
+        errors.push('Email address is required');
+    } else if (!emailRegex.test(email)) {
+        errors.push('Please provide a valid email address');
+    }
+
+    const password = typeof input.password === 'string' ? input.password : '';
+    if (!password) {
+        errors.push('Password is required');
+    }
+
+    if (errors.length > 0) {
+        return { isValid: false, errors };
+    }
+
+    return {
+        isValid: true,
+        errors: [],
+        data: { email, password },
+    };
+}

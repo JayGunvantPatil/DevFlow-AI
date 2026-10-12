@@ -2,6 +2,22 @@ export type ProjectStatus = 'active' | 'in_review' | 'archived' | 'paused';
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low';
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done';
 
+export interface User {
+    id: string;
+    name: string;
+    email: string;
+    avatar?: string;
+    role: 'developer' | 'lead' | 'admin';
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface AuthResponse {
+    user: User;
+    token: string;
+    message?: string;
+}
+
 export interface Project {
     id: string;
     name: string;

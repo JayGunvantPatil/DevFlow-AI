@@ -1,5 +1,6 @@
-import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
+import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
 import { validateTaskInput } from '../_utils/validate.js';
+import { extractUserFromRequest } from '../_utils/auth.js';
 import taskDetailHandler from './[id].js';
 import {
     VercelRequest,
@@ -19,6 +20,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
     res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
 
+    // Extract authenticated user if token present
+    const authUser = extractUserFromRequest(req);
+    if (req.headers?.authorization && !authUser) {
+        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
+
     // If request uses detail methods (PATCH/PUT/DELETE) or GET with an id, delegate to taskDetailHandler
     if (req.method === 'PATCH' || req.method === 'PUT' || req.method === 'DELETE') {
         return taskDetailHandler(req, res);
@@ -29,11 +36,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        const hasUserCol = await checkHasUserIdColumn();
+
         if (req.method === 'GET') {
             const { status, priority, projectId, search } = req.query;
 
             const conditions: string[] = [];
             const params: any[] = [];
+
+            // User isolation scoping
+            if (hasUserCol) {
+                if (authUser) {
+                    params.push(authUser.userId);
+                    conditions.push(`t.user_id = $${params.length}`);
+                } else {
+                    params.push('a0000000-0000-0000-0000-000000000001');
+                    conditions.push(`(t.user_id = $${params.length} OR t.user_id IS NULL)`);
+                }
+            }
 
             if (status && typeof status === 'string' && status !== 'all') {
                 params.push(status);
@@ -113,37 +133,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             const { projectId, title, status, priority, assigneeName, assigneeAvatar } = validation.data;
+            const targetUserId = authUser?.userId || 'a0000000-0000-0000-0000-000000000001';
 
-            // Verify whether projectId is an existing project UUID or name
-            const projectCheck = await query<{ id: string; name: string }>(
-                'SELECT id, name FROM projects WHERE id::text = $1 OR name = $1 LIMIT 1',
-                [projectId]
-            );
+            // Verify project exists and belongs to the user
+            let projectCheckSql = 'SELECT id, name FROM projects WHERE (id::text = $1 OR name = $1)';
+            const checkParams: any[] = [projectId];
+
+            if (hasUserCol && authUser) {
+                checkParams.push(authUser.userId);
+                projectCheckSql += ` AND user_id = $${checkParams.length}`;
+            }
+
+            projectCheckSql += ' LIMIT 1';
+            const projectCheck = await query<{ id: string; name: string }>(projectCheckSql, checkParams);
 
             if (projectCheck.length === 0) {
-                return errorResponse(res, 404, `Linked project '${projectId}' does not exist`, 'PROJECT_NOT_FOUND');
+                return errorResponse(res, 404, `Linked project '${projectId}' does not exist or does not belong to you`, 'PROJECT_NOT_FOUND');
             }
 
             const realProjectId = projectCheck[0].id;
             const realProjectName = projectCheck[0].name;
 
-            const sql = `
-        INSERT INTO tasks (project_id, title, status, priority, assignee_name, assignee_avatar)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING 
-          id, project_id AS "projectId", title, status, priority,
-          assignee_name AS "assigneeName", assignee_avatar AS "assigneeAvatar",
-          created_at AS "createdAt", updated_at AS "updatedAt"
-      `;
+            let sql: string;
+            let params: any[];
 
-            const rows = await query(sql, [
-                realProjectId,
-                title,
-                status,
-                priority,
-                assigneeName,
-                assigneeAvatar,
-            ]);
+            if (hasUserCol) {
+                sql = `
+          INSERT INTO tasks (project_id, title, status, priority, assignee_name, assignee_avatar, user_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING 
+            id, project_id AS "projectId", title, status, priority,
+            assignee_name AS "assigneeName", assignee_avatar AS "assigneeAvatar",
+            created_at AS "createdAt", updated_at AS "updatedAt"
+        `;
+                params = [realProjectId, title, status, priority, assigneeName, assigneeAvatar, targetUserId];
+            } else {
+                sql = `
+          INSERT INTO tasks (project_id, title, status, priority, assignee_name, assignee_avatar)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING 
+            id, project_id AS "projectId", title, status, priority,
+            assignee_name AS "assigneeName", assignee_avatar AS "assigneeAvatar",
+            created_at AS "createdAt", updated_at AS "updatedAt"
+        `;
+                params = [realProjectId, title, status, priority, assigneeName, assigneeAvatar];
+            }
+
+            const rows = await query(sql, params);
             const created = rows[0];
 
             return jsonResponse(res, 201, {

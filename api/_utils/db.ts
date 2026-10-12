@@ -92,3 +92,28 @@ export async function pingDatabase(): Promise<{ ok: boolean; message: string; la
         };
     }
 }
+
+let cachedHasUserIdColumn: boolean | null = null;
+
+/**
+ * Checks whether the 'user_id' column exists on 'projects' and 'tasks' (created in Migration 002).
+ * Caches the result to prevent redundant schema lookups.
+ */
+export async function checkHasUserIdColumn(): Promise<boolean> {
+    if (cachedHasUserIdColumn !== null) {
+        return cachedHasUserIdColumn;
+    }
+    try {
+        const rows = await query<{ column_name: string }>(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'user_id' LIMIT 1"
+        );
+        cachedHasUserIdColumn = rows.length > 0;
+        return cachedHasUserIdColumn;
+    } catch {
+        return false;
+    }
+}
+
+export function resetSchemaCache(): void {
+    cachedHasUserIdColumn = null;
+}

@@ -1,4 +1,4 @@
-import { HealthResponse, Project, ProjectStatus, Task } from '../types';
+import { AuthResponse, HealthResponse, Project, ProjectStatus, Task, User } from '../types';
 
 export class ApiError extends Error {
     code?: string;
@@ -14,23 +14,82 @@ export class ApiError extends Error {
     }
 }
 
+const TOKEN_STORAGE_KEY = 'devflow_auth_token';
+
 /**
  * DevFlow AI API Client
  * Interfaces with Vercel Serverless Functions (/api/*) backed by Neon PostgreSQL
  */
 class ApiClient {
     private baseUrl: string;
+    private token: string | null = null;
+    private authErrorListeners: Array<() => void> = [];
 
     constructor() {
-        this.baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+        this.baseUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
+        // Load initial token from localStorage if in browser environment
+        if (typeof window !== 'undefined' && window.localStorage) {
+            try {
+                this.token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+            } catch {
+                this.token = null;
+            }
+        }
+    }
+
+    /**
+     * Updates the active JWT session token and persists it in localStorage.
+     */
+    setToken(token: string | null): void {
+        this.token = token;
+        if (typeof window !== 'undefined' && window.localStorage) {
+            try {
+                if (token) {
+                    window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+                } else {
+                    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+                }
+            } catch {
+                // Ignore storage errors in restricted iframe environments
+            }
+        }
+    }
+
+    /**
+     * Returns the active session token if one exists.
+     */
+    getToken(): string | null {
+        return this.token;
+    }
+
+    /**
+     * Subscribes to 401 Unauthorized session expiration events.
+     */
+    onAuthError(callback: () => void): () => void {
+        this.authErrorListeners.push(callback);
+        return () => {
+            this.authErrorListeners = this.authErrorListeners.filter((cb) => cb !== callback);
+        };
+    }
+
+    private notifyAuthError(): void {
+        this.setToken(null);
+        for (const listener of this.authErrorListeners) {
+            try {
+                listener();
+            } catch {
+                // Ignore listener exceptions
+            }
+        }
     }
 
     private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
         const url = `${this.baseUrl}${endpoint}`;
-        const headers = {
+        const headers: Record<string, string> = {
             Accept: 'application/json',
             'Content-Type': 'application/json',
-            ...(options.headers || {}),
+            ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+            ...(options.headers as Record<string, string> || {}),
         };
 
         const res = await fetch(url, {
@@ -42,6 +101,11 @@ class ApiClient {
         const data = isJson ? await res.json() : await res.text();
 
         if (!res.ok) {
+            // If 401 received on protected endpoint (and not trying to login), notify session expiration
+            if (res.status === 401 && !endpoint.includes('/api/auth/login')) {
+                this.notifyAuthError();
+            }
+
             const errorMsg =
                 typeof data === 'object' && data?.error?.message
                     ? data.error.message
@@ -69,6 +133,48 @@ class ApiClient {
             const latencyMs = Math.round(performance.now() - startTime);
             const message = err.message || 'Failed to connect to /api/health';
             throw { message, latencyMs, code: err.code, status: err.status };
+        }
+    }
+
+    /**
+     * Authentication API Endpoints
+     */
+    async register(payload: { name: string; email: string; password: string }): Promise<AuthResponse> {
+        const res = await this.request<AuthResponse>('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        if (res.token) {
+            this.setToken(res.token);
+        }
+        return res;
+    }
+
+    async login(payload: { email: string; password: string }): Promise<AuthResponse> {
+        const res = await this.request<AuthResponse>('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        if (res.token) {
+            this.setToken(res.token);
+        }
+        return res;
+    }
+
+    async getMe(): Promise<{ user: User }> {
+        return this.request<{ user: User }>('/api/auth/me', { method: 'GET' });
+    }
+
+    async logout(): Promise<{ success: boolean; message: string }> {
+        try {
+            const res = await this.request<{ success: boolean; message: string }>('/api/auth/logout', {
+                method: 'POST',
+            });
+            this.setToken(null);
+            return res;
+        } catch {
+            this.setToken(null);
+            return { success: true, message: 'Logged out successfully' };
         }
     }
 

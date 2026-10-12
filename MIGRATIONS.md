@@ -11,6 +11,7 @@ The project contains two SQL files under the [`migrations/`](file:///migrations/
 | File | Purpose | Required / Optional |
 | :--- | :--- | :--- |
 | [`001_init_projects_and_tasks.sql`](file:///migrations/001_init_projects_and_tasks.sql) | Creates the `projects` and `tasks` tables, extensions, triggers, and performance indexes. | **Required** |
+| [`002_user_authentication.sql`](file:///migrations/002_user_authentication.sql) | Creates `users` table, adds non-destructive `user_id` foreign keys to `projects` and `tasks`, backfills default migration owner, and adds indexes. | **Required for Auth** |
 | [`seed.sql`](file:///migrations/seed.sql) | Inserts 3 sample engineering projects and 5 linked tasks for immediate testing. | *Optional* |
 
 ---
@@ -57,6 +58,13 @@ The project contains two SQL files under the [`migrations/`](file:///migrations/
    GROUP BY p.name, p.status;
    ```
    You should see 3 rows returned (`devflow-core`, `syntax-analyzer`, `cloud-agent-runner`).
+
+### Step 5: Run User Authentication Migration (`002_user_authentication.sql`)
+1. Open [`migrations/002_user_authentication.sql`](file:///migrations/002_user_authentication.sql).
+2. Copy the entire file content.
+3. Paste it into the Neon SQL Editor query tab.
+4. Click **Run** (`Ctrl+Enter` on Windows / `Cmd+Enter` on Mac).
+5. This safely creates the `users` table, adds `user_id` foreign key columns to `projects` and `tasks` without deleting existing records, provisions a migration user, and creates performance indexes.
 
 ---
 
