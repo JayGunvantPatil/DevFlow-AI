@@ -14,13 +14,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
-    res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+    res.setHeader('X-DevFlow-Stage', 'Phase-3B-Production-Ready');
+    res.setHeader('X-DevFlow-Auth', 'Enforced');
 
-    // Extract authenticated user if token present
+    // Enforce server-side authentication
     const authUser = extractUserFromRequest(req);
     if (req.headers?.authorization && !authUser) {
         return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
+    if (!authUser) {
+        return errorResponse(
+            res,
+            401,
+            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
+            'UNAUTHORIZED'
+        );
     }
 
     let body = req.body;
@@ -46,37 +54,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const hasUserCol = await checkHasUserIdColumn();
 
         if (req.method === 'GET') {
-            const params: any[] = [cleanId];
-            let userClause = '';
-
-            if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userClause = `AND t.user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userClause = `AND (t.user_id = $${params.length} OR t.user_id IS NULL)`;
-                }
-            }
-
             const sql = `
         SELECT 
           t.id, t.project_id AS "projectId", p.name AS "projectName",
           t.title, t.status, t.priority,
           t.assignee_name AS "assigneeName", t.assignee_avatar AS "assigneeAvatar",
-          t.created_at AS "createdAt", t.updated_at AS "updatedAt"
+          t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+          t.user_id AS "userId"
         FROM tasks t
         JOIN projects p ON p.id = t.project_id
-        WHERE t.id::text = $1 ${userClause}
+        WHERE t.id::text = $1
       `;
 
-            const rows = await query(sql, params);
+            const rows = await query(sql, [cleanId]);
 
             if (rows.length === 0) {
                 return errorResponse(res, 404, `Task not found with id: ${cleanId}`, 'TASK_NOT_FOUND');
             }
 
             const r = rows[0];
+
+            // Enforce ownership: 403 Forbidden if task belongs to another user
+            if (hasUserCol && r.userId && r.userId !== authUser.userId) {
+                return errorResponse(
+                    res,
+                    403,
+                    'Access forbidden: You do not have permission to access this task',
+                    'FORBIDDEN'
+                );
+            }
+
             return jsonResponse(res, 200, {
                 task: {
                     id: r.id,
@@ -149,18 +156,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return errorResponse(res, 400, 'No valid fields provided for update', 'NO_FIELDS_TO_UPDATE');
             }
 
+            // Verify task existence and ownership before updating
+            if (hasUserCol) {
+                const existing = await query<{ id: string; user_id: string }>(
+                    'SELECT id, user_id FROM tasks WHERE id::text = $1',
+                    [cleanId]
+                );
+                if (existing.length === 0) {
+                    return errorResponse(res, 404, `Task not found with id: ${cleanId}`, 'TASK_NOT_FOUND');
+                }
+                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                    return errorResponse(
+                        res,
+                        403,
+                        'Access forbidden: You do not have permission to modify this task',
+                        'FORBIDDEN'
+                    );
+                }
+            }
+
             params.push(cleanId);
             const idPlaceholder = `$${params.length}`;
             let userWhereClause = '';
 
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userWhereClause = `AND user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userWhereClause = `AND (user_id = $${params.length} OR user_id IS NULL)`;
-                }
+                params.push(authUser.userId);
+                userWhereClause = `AND user_id = $${params.length}`;
             }
 
             const sql = `
@@ -196,17 +217,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'DELETE') {
+            // Verify task existence and ownership before deleting
+            if (hasUserCol) {
+                const existing = await query<{ id: string; user_id: string }>(
+                    'SELECT id, user_id FROM tasks WHERE id::text = $1',
+                    [cleanId]
+                );
+                if (existing.length === 0) {
+                    return errorResponse(res, 404, `Task not found with id: ${cleanId}`, 'TASK_NOT_FOUND');
+                }
+                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                    return errorResponse(
+                        res,
+                        403,
+                        'Access forbidden: You do not have permission to delete this task',
+                        'FORBIDDEN'
+                    );
+                }
+            }
+
             const params: any[] = [cleanId];
             let userWhere = '';
 
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userWhere = `AND user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userWhere = `AND (user_id = $${params.length} OR user_id IS NULL)`;
-                }
+                params.push(authUser.userId);
+                userWhere = `AND user_id = $${params.length}`;
             }
 
             const sql = `DELETE FROM tasks WHERE id::text = $1 ${userWhere} RETURNING id`;

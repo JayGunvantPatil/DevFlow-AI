@@ -18,13 +18,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Set stage headers
-    res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
-    res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+    res.setHeader('X-DevFlow-Stage', 'Phase-3B-Production-Ready');
+    res.setHeader('X-DevFlow-Auth', 'Enforced');
 
-    // Extract authenticated user if token present
+    // Enforce server-side authentication
     const authUser = extractUserFromRequest(req);
     if (req.headers?.authorization && !authUser) {
         return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
+    if (!authUser) {
+        return errorResponse(
+            res,
+            401,
+            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
+            'UNAUTHORIZED'
+        );
     }
 
     // If request has project id, delegate to projectDetailHandler
@@ -45,16 +53,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const conditions: string[] = [];
             const params: any[] = [];
 
-            // User isolation scoping
+            // Strict user isolation scoping: only return projects belonging to authenticated user
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    conditions.push(`p.user_id = $${params.length}`);
-                } else {
-                    // Fallback in unauthenticated dev/test mode to migration user or unassigned projects
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    conditions.push(`(p.user_id = $${params.length} OR p.user_id IS NULL)`);
-                }
+                params.push(authUser.userId);
+                conditions.push(`p.user_id = $${params.length}`);
             }
 
             if (status && typeof status === 'string' && status !== 'all') {
@@ -119,8 +121,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return jsonResponse(res, 200, {
                 projects,
                 count: projects.length,
-                isDevelopmentStage: true,
-                disclaimer: 'Development-stage API: Write access is unenforced until Phase 3 authentication is implemented. Not ready for public production use.',
             });
         }
 
@@ -137,7 +137,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             const { name, slug, description, status, tags, leadName, leadAvatar } = validation.data;
-            const targetUserId = authUser?.userId || 'a0000000-0000-0000-0000-000000000001';
+            // Always derive user ID exclusively from verified server session, never trust client input
+            const targetUserId = authUser.userId;
+            const finalLeadName = leadName === 'Sofia Chen' && authUser.name ? authUser.name : leadName;
 
             let sql: string;
             let params: any[];
@@ -153,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         `;
-                params = [name, slug, description, status, tags, leadName, leadAvatar, targetUserId];
+                params = [name, slug, description, status, tags, finalLeadName, leadAvatar, targetUserId];
             } else {
                 sql = `
           INSERT INTO projects (name, slug, description, status, tags, lead_name, lead_avatar)
@@ -165,7 +167,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         `;
-                params = [name, slug, description, status, tags, leadName, leadAvatar];
+                params = [name, slug, description, status, tags, finalLeadName, leadAvatar];
             }
 
             const rows = await query(sql, params);

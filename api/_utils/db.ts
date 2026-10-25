@@ -1,9 +1,10 @@
-import { Pool, neonConfig } from '@neondatabase/serverless';
+import { Pool, neon, neonConfig } from '@neondatabase/serverless';
 
 // Configure Neon for serverless execution: enable HTTP fetch queries for low latency and zero WebSocket cold-start issues
 neonConfig.poolQueryViaFetch = true;
 
 let poolInstance: Pool | null = null;
+let sqlInstance: ReturnType<typeof neon> | null = null;
 
 export class DatabaseNotConfiguredError extends Error {
     constructor() {
@@ -13,7 +14,7 @@ export class DatabaseNotConfiguredError extends Error {
 }
 
 /**
- * Resets the cached pool instance (useful for testing or reconnecting with new config).
+ * Resets the cached pool and sql instances (useful for testing or reconnecting with new config).
  */
 export function resetDbPool(): void {
     if (poolInstance) {
@@ -24,6 +25,7 @@ export function resetDbPool(): void {
         }
     }
     poolInstance = null;
+    sqlInstance = null;
 }
 
 /**
@@ -51,13 +53,107 @@ export function getDbPool(): Pool {
 }
 
 /**
+ * Returns a cached Neon HTTP query client for serverless fetch execution and transactions.
+ */
+export function getNeonSql(): ReturnType<typeof neon> {
+    const connectionString = process.env.DATABASE_URL;
+
+    if (!connectionString || connectionString.trim() === '' || connectionString.includes('your_neon_database_url_here')) {
+        throw new DatabaseNotConfiguredError();
+    }
+
+    if (!sqlInstance) {
+        sqlInstance = neon(connectionString);
+    }
+
+    return sqlInstance;
+}
+
+export interface QueryItem {
+    text: string;
+    params?: any[];
+}
+
+/**
+ * Parses a raw SQL string into clean, individual executable statements,
+ * filtering out transaction wrapper commands (BEGIN, COMMIT, ROLLBACK, END)
+ * since transaction handling is managed by the transaction driver.
+ */
+function parseSqlStatements(sqlText: string): string[] {
+    return sqlText
+        .split(';')
+        .map((s) => s.trim())
+        .filter((s) => {
+            if (!s) return false;
+            const upper = s.toUpperCase();
+            return upper !== 'BEGIN' && upper !== 'COMMIT' && upper !== 'ROLLBACK' && upper !== 'END';
+        });
+}
+
+/**
+ * Executes a batch of parameterized queries atomically in a single transaction
+ * using Neon's native HTTP transaction batching API.
+ * If any query fails, the entire transaction is rolled back automatically by Neon.
+ * 
+ * @param queries Array of query objects ({ text, params }) or raw SQL query strings.
+ * @returns Array of result sets, one for each query in the batch.
+ */
+export async function executeTransaction<T = any>(
+    queries: Array<QueryItem | string>
+): Promise<T[][]> {
+    const sql = getNeonSql();
+
+    const queryPromises = queries.map((q) => {
+        if (typeof q === 'string') {
+            return sql.query(q, []);
+        }
+        return sql.query(q.text, q.params || []);
+    });
+
+    if (queryPromises.length === 0) {
+        return [];
+    }
+
+    try {
+        const results = await sql.transaction(queryPromises);
+        return results as T[][];
+    } catch (error: any) {
+        const safeMessage = error.message?.replace(/postgres(?:ql)?:\/\/[^@]+@/gi, 'postgresql://***:***@') || 'Transaction failed';
+        const sanitizedError = new Error(safeMessage);
+        (sanitizedError as any).code = error.code;
+        throw sanitizedError;
+    }
+}
+
+/**
+ * Alias for executeTransaction for convenient transaction execution.
+ */
+export const transaction = executeTransaction;
+
+/**
  * Executes a parameterized SQL query safely against Neon PostgreSQL.
  * Parameterized inputs protect against SQL injection.
+ * 
+ * If the input SQL contains multiple statements or transaction boundary commands
+ * (e.g. "BEGIN; SELECT 1 as n; COMMIT;"), it delegates execution to Neon's HTTP
+ * transaction batching API to prevent error 42601 ("cannot insert multiple commands
+ * into a prepared statement").
  * 
  * @param text Parameterized SQL statement, e.g. "SELECT * FROM projects WHERE id = $1"
  * @param params Array of parameter values matching placeholders [$1, $2, ...]
  */
 export async function query<T = any>(text: string, params: any[] = []): Promise<T[]> {
+    // If text contains multiple semicolon-separated statements (e.g. BEGIN; SELECT 1 as n; COMMIT;),
+    // handle it safely through Neon's transaction batching rather than failing with 42601.
+    if (params.length === 0 && text.includes(';')) {
+        const statements = parseSqlStatements(text);
+        if (statements.length > 1 || (statements.length === 1 && /BEGIN|COMMIT/i.test(text))) {
+            const batchResults = await executeTransaction(statements.map((stmt) => ({ text: stmt, params: [] })));
+            const lastResult = batchResults.length > 0 ? batchResults[batchResults.length - 1] : [];
+            return lastResult as T[];
+        }
+    }
+
     const pool = getDbPool();
     try {
         const result = await pool.query(text, params);

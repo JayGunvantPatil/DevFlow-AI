@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { NavLink, useLocation, Outlet } from 'react-router-dom';
 import {
     LayoutDashboard,
@@ -21,9 +21,8 @@ import {
     LogOut,
     ChevronDown,
 } from 'lucide-react';
-import { apiClient } from '../services/apiClient';
-import { HealthCheckResult } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { useHealth } from '../context/HealthContext';
 import { AuthModal } from '../components/auth/AuthModal';
 
 interface NavItem {
@@ -100,13 +99,7 @@ export const AppLayout: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [showNotifications, setShowNotifications] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
-    const [health, setHealth] = useState<HealthCheckResult>({
-        data: null,
-        latencyMs: null,
-        error: null,
-        loading: true,
-        lastChecked: null,
-    });
+    const { health, refreshHealth: fetchHealthStatus } = useHealth();
 
     const location = useLocation();
     const currentMeta = routeMetadata[location.pathname] || {
@@ -114,41 +107,6 @@ export const AppLayout: React.FC = () => {
         description: 'Modern collaborative developer workspace',
         breadcrumb: 'Overview',
     };
-
-    const fetchHealthStatus = async () => {
-        setHealth((prev) => ({ ...prev, loading: true, error: null }));
-        try {
-            const res = await apiClient.checkHealth();
-            setHealth({
-                data: res.data,
-                latencyMs: res.latencyMs,
-                error: null,
-                loading: false,
-                lastChecked: new Date(),
-            });
-        } catch (err: unknown) {
-            const msg = typeof err === 'object' && err !== null && 'message' in err
-                ? (err as { message: string }).message
-                : 'Failed to connect to /api/health';
-            const latency = typeof err === 'object' && err !== null && 'latencyMs' in err
-                ? (err as { latencyMs: number }).latencyMs
-                : null;
-            setHealth({
-                data: null,
-                latencyMs: latency,
-                error: msg,
-                loading: false,
-                lastChecked: new Date(),
-            });
-        }
-    };
-
-    useEffect(() => {
-        fetchHealthStatus();
-        // Poll API status every 45 seconds to keep dashboard live
-        const interval = setInterval(fetchHealthStatus, 45000);
-        return () => clearInterval(interval);
-    }, []);
 
     return (
         <div className="min-h-screen bg-dev-bg text-dev-text flex flex-col md:flex-row">

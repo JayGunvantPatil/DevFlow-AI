@@ -17,13 +17,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
-    res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+    // Set stage headers
+    res.setHeader('X-DevFlow-Stage', 'Phase-3B-Production-Ready');
+    res.setHeader('X-DevFlow-Auth', 'Enforced');
 
-    // Extract authenticated user if token present
+    // Enforce server-side authentication
     const authUser = extractUserFromRequest(req);
     if (req.headers?.authorization && !authUser) {
         return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
+    if (!authUser) {
+        return errorResponse(
+            res,
+            401,
+            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
+            'UNAUTHORIZED'
+        );
     }
 
     // If request uses detail methods (PATCH/PUT/DELETE) or GET with an id, delegate to taskDetailHandler
@@ -44,15 +53,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const conditions: string[] = [];
             const params: any[] = [];
 
-            // User isolation scoping
+            // Strict user isolation scoping: tasks must belong to authenticated user
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    conditions.push(`t.user_id = $${params.length}`);
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    conditions.push(`(t.user_id = $${params.length} OR t.user_id IS NULL)`);
+                params.push(authUser.userId);
+                conditions.push(`t.user_id = $${params.length}`);
+            }
+
+            // If filtering by specific project, verify project access first
+            if (projectId && typeof projectId === 'string' && projectId !== 'all') {
+                const projCheck = await query<{ id: string; user_id: string }>(
+                    'SELECT id, user_id FROM projects WHERE (id::text = $1 OR name = $1) LIMIT 1',
+                    [projectId]
+                );
+
+                if (projCheck.length === 0) {
+                    return errorResponse(res, 404, `Project '${projectId}' not found`, 'PROJECT_NOT_FOUND');
                 }
+
+                if (hasUserCol && projCheck[0].user_id && projCheck[0].user_id !== authUser.userId) {
+                    return errorResponse(
+                        res,
+                        403,
+                        'Access forbidden: You do not have permission to view tasks for this project',
+                        'FORBIDDEN'
+                    );
+                }
+
+                params.push(projCheck[0].id);
+                conditions.push(`t.project_id = $${params.length}`);
             }
 
             if (status && typeof status === 'string' && status !== 'all') {
@@ -63,11 +91,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (priority && typeof priority === 'string' && priority !== 'all') {
                 params.push(priority);
                 conditions.push(`t.priority = $${params.length}`);
-            }
-
-            if (projectId && typeof projectId === 'string' && projectId !== 'all') {
-                params.push(projectId);
-                conditions.push(`(t.project_id::text = $${params.length} OR p.name = $${params.length})`);
             }
 
             if (search && typeof search === 'string' && search.trim()) {
@@ -115,8 +138,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return jsonResponse(res, 200, {
                 tasks,
                 count: tasks.length,
-                isDevelopmentStage: true,
-                disclaimer: 'Development-stage API: Write access is unenforced until Phase 3 authentication is implemented. Not ready for public production use.',
             });
         }
 
@@ -133,22 +154,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             const { projectId, title, status, priority, assigneeName, assigneeAvatar } = validation.data;
-            const targetUserId = authUser?.userId || 'a0000000-0000-0000-0000-000000000001';
+            const targetUserId = authUser.userId;
 
-            // Verify project exists and belongs to the user
-            let projectCheckSql = 'SELECT id, name FROM projects WHERE (id::text = $1 OR name = $1)';
-            const checkParams: any[] = [projectId];
-
-            if (hasUserCol && authUser) {
-                checkParams.push(authUser.userId);
-                projectCheckSql += ` AND user_id = $${checkParams.length}`;
-            }
-
-            projectCheckSql += ' LIMIT 1';
-            const projectCheck = await query<{ id: string; name: string }>(projectCheckSql, checkParams);
+            // Verify project exists and belongs to the authenticated user
+            const projectCheck = await query<{ id: string; name: string; user_id: string }>(
+                'SELECT id, name, user_id FROM projects WHERE (id::text = $1 OR name = $1) LIMIT 1',
+                [projectId]
+            );
 
             if (projectCheck.length === 0) {
-                return errorResponse(res, 404, `Linked project '${projectId}' does not exist or does not belong to you`, 'PROJECT_NOT_FOUND');
+                return errorResponse(res, 404, `Linked project '${projectId}' does not exist`, 'PROJECT_NOT_FOUND');
+            }
+
+            // Enforce project ownership authorization: 403 Forbidden if project belongs to another user
+            if (hasUserCol && projectCheck[0].user_id && projectCheck[0].user_id !== authUser.userId) {
+                return errorResponse(
+                    res,
+                    403,
+                    'Access forbidden: You do not have permission to create tasks under this project',
+                    'FORBIDDEN'
+                );
             }
 
             const realProjectId = projectCheck[0].id;

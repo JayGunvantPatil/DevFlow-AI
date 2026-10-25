@@ -1,4 +1,4 @@
-import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
+import { query, executeTransaction, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
 import { extractUserFromRequest } from '../_utils/auth.js';
 import {
     VercelRequest,
@@ -14,13 +14,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    res.setHeader('X-DevFlow-Stage', 'Phase-2-Development');
-    res.setHeader('X-DevFlow-Auth', 'Unenforced-Development-Mode');
+    res.setHeader('X-DevFlow-Stage', 'Phase-3B-Production-Ready');
+    res.setHeader('X-DevFlow-Auth', 'Enforced');
 
-    // Extract authenticated user if token present
+    // Enforce server-side authentication
     const authUser = extractUserFromRequest(req);
     if (req.headers?.authorization && !authUser) {
         return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
+    }
+    if (!authUser) {
+        return errorResponse(
+            res,
+            401,
+            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
+            'UNAUTHORIZED'
+        );
     }
 
     let body = req.body;
@@ -46,19 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const hasUserCol = await checkHasUserIdColumn();
 
         if (req.method === 'GET') {
-            const params: any[] = [cleanId];
-            let userClause = '';
-
-            if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userClause = `AND p.user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userClause = `AND (p.user_id = $${params.length} OR p.user_id IS NULL)`;
-                }
-            }
-
+            // First look up the project to check existence and ownership
             const sql = `
         SELECT 
           p.id, p.name, p.slug, p.description, p.status, p.stars, p.tags,
@@ -66,20 +62,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           p.lead_avatar AS "leadAvatar",
           p.created_at AS "createdAt",
           p.updated_at AS "updatedAt",
+          p.user_id AS "userId",
           COALESCE(COUNT(t.id) FILTER (WHERE t.status != 'done'), 0)::int AS "openTasksCount"
         FROM projects p
         LEFT JOIN tasks t ON t.project_id = p.id
-        WHERE (p.id::text = $1 OR p.slug = $1) ${userClause}
+        WHERE (p.id::text = $1 OR p.slug = $1)
         GROUP BY p.id
       `;
 
-            const rows = await query(sql, params);
+            const rows = await query(sql, [cleanId]);
 
             if (rows.length === 0) {
                 return errorResponse(res, 404, `Project not found with id or slug: ${cleanId}`, 'PROJECT_NOT_FOUND');
             }
 
             const r = rows[0];
+
+            // Enforce ownership: 403 Forbidden if project belongs to another user
+            if (hasUserCol && r.userId && r.userId !== authUser.userId) {
+                return errorResponse(res, 403, 'Access forbidden: You do not have permission to access this project', 'FORBIDDEN');
+            }
+
             return jsonResponse(res, 200, {
                 project: {
                     id: r.id,
@@ -168,18 +171,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return errorResponse(res, 400, 'No valid fields provided for update', 'NO_FIELDS_TO_UPDATE');
             }
 
+            // Verify project existence and ownership before updating
+            if (hasUserCol) {
+                const existing = await query<{ id: string; user_id: string }>(
+                    'SELECT id, user_id FROM projects WHERE id::text = $1',
+                    [cleanId]
+                );
+                if (existing.length === 0) {
+                    return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
+                }
+                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                    return errorResponse(res, 403, 'Access forbidden: You do not have permission to modify this project', 'FORBIDDEN');
+                }
+            }
+
             params.push(cleanId);
             const idPlaceholder = `$${params.length}`;
             let userWhereClause = '';
 
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userWhereClause = `AND user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userWhereClause = `AND (user_id = $${params.length} OR user_id IS NULL)`;
-                }
+                params.push(authUser.userId);
+                userWhereClause = `AND user_id = $${params.length}`;
             }
 
             const sql = `
@@ -226,25 +238,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'DELETE') {
-            const params: any[] = [cleanId];
-            let userWhere = '';
-
+            // Verify project existence and ownership before deleting
             if (hasUserCol) {
-                if (authUser) {
-                    params.push(authUser.userId);
-                    userWhere = `AND user_id = $${params.length}`;
-                } else {
-                    params.push('a0000000-0000-0000-0000-000000000001');
-                    userWhere = `AND (user_id = $${params.length} OR user_id IS NULL)`;
+                const existing = await query<{ id: string; user_id: string }>(
+                    'SELECT id, user_id FROM projects WHERE id::text = $1',
+                    [cleanId]
+                );
+                if (existing.length === 0) {
+                    return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
+                }
+                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                    return errorResponse(res, 403, 'Access forbidden: You do not have permission to delete this project', 'FORBIDDEN');
                 }
             }
 
-            const sql = `DELETE FROM projects WHERE id::text = $1 ${userWhere} RETURNING id`;
-            const rows = await query(sql, params);
-
-            if (rows.length === 0) {
-                return errorResponse(res, 404, `Project not found with id: ${cleanId}`, 'PROJECT_NOT_FOUND');
-            }
+            // Atomic project and tasks deletion using database transaction
+            await executeTransaction([
+                { text: 'DELETE FROM tasks WHERE project_id::text = $1', params: [cleanId] },
+                {
+                    text: hasUserCol
+                        ? 'DELETE FROM projects WHERE id::text = $1 AND user_id = $2'
+                        : 'DELETE FROM projects WHERE id::text = $1',
+                    params: hasUserCol ? [cleanId, authUser.userId] : [cleanId],
+                },
+            ]);
 
             return jsonResponse(res, 200, {
                 success: true,

@@ -9,6 +9,8 @@ import {
     RefreshCw,
     AlertCircle,
     Trash2,
+    ShieldAlert,
+    X,
 } from 'lucide-react';
 import { Task, TaskPriority, TaskStatus, Project } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -27,6 +29,7 @@ export const Tasks: React.FC = () => {
     const [projects, setProjects] = useState<Project[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
@@ -35,7 +38,11 @@ export const Tasks: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
+
+    // Delete confirmation state
+    const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     // New task form state
     const [newTitle, setNewTitle] = useState('');
@@ -75,7 +82,16 @@ export const Tasks: React.FC = () => {
 
     const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTitle.trim()) return;
+        const trimmedTitle = newTitle.trim();
+        if (!trimmedTitle) {
+            setFormError('Task title is required');
+            return;
+        }
+
+        if (trimmedTitle.length < 3 || trimmedTitle.length > 255) {
+            setFormError('Task title must be between 3 and 255 characters');
+            return;
+        }
 
         if (!selectedProjectId && projects.length === 0) {
             setFormError('No projects available. Please create a project before adding tasks.');
@@ -94,7 +110,7 @@ export const Tasks: React.FC = () => {
         try {
             const res = await apiClient.createTask({
                 projectId: targetProjectId,
-                title: newTitle.trim(),
+                title: trimmedTitle,
                 status: newStatus,
                 priority: newPriority,
             });
@@ -102,6 +118,8 @@ export const Tasks: React.FC = () => {
             setTasks((prev) => [res.task, ...prev]);
             setIsModalOpen(false);
             setNewTitle('');
+            setSuccessMessage(`Task "${res.task.title}" created successfully`);
+            setTimeout(() => setSuccessMessage(null), 4000);
         } catch (err: any) {
             setFormError(err.message || 'Failed to create task');
         } finally {
@@ -122,12 +140,14 @@ export const Tasks: React.FC = () => {
 
         try {
             await apiClient.updateTask(taskId, { status: nextStatus });
+            setSuccessMessage(`Task status updated to "${nextStatus.replace('_', ' ')}"`);
+            setTimeout(() => setSuccessMessage(null), 3000);
         } catch (err: any) {
             // Rollback on failure
             setTasks((prev) =>
                 prev.map((t) => (t.id === taskId ? { ...t, status: previousStatus } : t))
             );
-            alert(`Failed to update task status: ${err.message}`);
+            setError(`Failed to update task status: ${err.message}`);
         }
     };
 
@@ -139,18 +159,26 @@ export const Tasks: React.FC = () => {
         await updateTaskStatus(taskId, nextStatus);
     };
 
-    const handleDeleteTask = async (id: string, title: string) => {
-        if (!window.confirm(`Are you sure you want to delete task "${title}"?`)) {
-            return;
-        }
-        setDeletingId(id);
+    const handleOpenDeleteDialog = (task: Task) => {
+        setTaskToDelete(task);
+        setDeleteError(null);
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!taskToDelete) return;
+        setIsDeleting(true);
+        setDeleteError(null);
         try {
-            await apiClient.deleteTask(id);
-            setTasks((prev) => prev.filter((t) => t.id !== id));
+            const deletedTitle = taskToDelete.title;
+            await apiClient.deleteTask(taskToDelete.id);
+            setTasks((prev) => prev.filter((t) => t.id !== taskToDelete.id));
+            setTaskToDelete(null);
+            setSuccessMessage(`Task "${deletedTitle}" deleted successfully`);
+            setTimeout(() => setSuccessMessage(null), 4000);
         } catch (err: any) {
-            alert(`Failed to delete task: ${err.message}`);
+            setDeleteError(err.message || 'Failed to delete task');
         } finally {
-            setDeletingId(null);
+            setIsDeleting(false);
         }
     };
 
@@ -159,6 +187,9 @@ export const Tasks: React.FC = () => {
         setProjects(previewProjects);
         setError(null);
     };
+
+    const isForbidden = error && (error.includes('Forbidden') || error.includes('403') || error.includes('permission') || error.includes('authorized'));
+    const isAuthExpired = error && (error.includes('401') || error.includes('Unauthorized') || error.includes('expired') || error.includes('login'));
 
     const filteredTasks = tasks.filter((task) => {
         const matchesSearch =
@@ -236,14 +267,51 @@ export const Tasks: React.FC = () => {
                 </div>
             </div>
 
-            {/* Database Error Banner */}
+            {/* Success Notification Banner */}
+            {successMessage && (
+                <div className="p-3 px-4 rounded-lg bg-dev-success/15 border border-dev-success/30 flex items-center justify-between text-xs text-dev-success animate-fadeIn">
+                    <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span className="font-medium">{successMessage}</span>
+                    </div>
+                    <button
+                        onClick={() => setSuccessMessage(null)}
+                        className="text-dev-success/70 hover:text-dev-success transition-colors"
+                        aria-label="Dismiss message"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+            )}
+
+            {/* Database / Auth Error Banner */}
             {error && (
                 <div className="p-4 rounded-lg bg-dev-surface border border-dev-red/30 space-y-3">
                     <div className="flex items-start gap-3">
-                        <AlertCircle className="w-5 h-5 text-dev-red flex-shrink-0 mt-0.5" />
+                        {isForbidden ? (
+                            <ShieldAlert className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                        ) : (
+                            <AlertCircle className="w-5 h-5 text-dev-red flex-shrink-0 mt-0.5" />
+                        )}
                         <div className="flex-1 space-y-1 text-xs">
-                            <h4 className="font-semibold text-dev-heading">Backend Database Notice</h4>
+                            <h4 className="font-semibold text-dev-heading">
+                                {isForbidden
+                                    ? 'Access Forbidden (403)'
+                                    : isAuthExpired
+                                        ? 'Authentication Required (401)'
+                                        : 'Backend Service Notice'}
+                            </h4>
                             <p className="text-dev-textMuted leading-relaxed">{error}</p>
+                            {isForbidden && (
+                                <p className="text-amber-400/90 text-[11px]">
+                                    You do not have permission to view or manage tasks for this project. Only authorized project members can access these records.
+                                </p>
+                            )}
+                            {isAuthExpired && (
+                                <p className="text-dev-accent text-[11px]">
+                                    Your session token is missing or has expired. Please sign in again to restore access.
+                                </p>
+                            )}
                             {error.includes('DATABASE_URL') && (
                                 <div className="mt-2 p-2.5 rounded bg-dev-bg border border-dev-border text-[11px] font-mono space-y-1 text-dev-text">
                                     <div className="text-dev-textSubtle font-sans font-medium">To connect your Neon database:</div>
@@ -407,8 +475,7 @@ export const Tasks: React.FC = () => {
                                 </TableCell>
                                 <TableCell>
                                     <button
-                                        onClick={() => handleDeleteTask(task.id, task.title)}
-                                        disabled={deletingId === task.id}
+                                        onClick={() => handleOpenDeleteDialog(task)}
                                         title="Delete task"
                                         className="p-1 text-dev-textSubtle hover:text-dev-red opacity-0 group-hover:opacity-100 transition-opacity"
                                     >
@@ -461,8 +528,7 @@ export const Tasks: React.FC = () => {
                                                         {task.priority}
                                                     </Badge>
                                                     <button
-                                                        onClick={() => handleDeleteTask(task.id, task.title)}
-                                                        disabled={deletingId === task.id}
+                                                        onClick={() => handleOpenDeleteDialog(task)}
                                                         title="Delete task"
                                                         className="p-0.5 text-dev-textSubtle hover:text-dev-red opacity-0 group-hover:opacity-100 transition-opacity"
                                                     >
@@ -600,6 +666,59 @@ export const Tasks: React.FC = () => {
                         </div>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Delete Confirmation Modal */}
+            <Modal
+                isOpen={!!taskToDelete}
+                onClose={() => {
+                    if (!isDeleting) {
+                        setTaskToDelete(null);
+                        setDeleteError(null);
+                    }
+                }}
+                title="Delete Task"
+                description="This action cannot be undone. The task will be permanently removed from your project in Neon PostgreSQL."
+                footer={
+                    <>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isDeleting}
+                            onClick={() => {
+                                setTaskToDelete(null);
+                                setDeleteError(null);
+                            }}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="danger"
+                            size="sm"
+                            loading={isDeleting}
+                            onClick={handleConfirmDelete}
+                        >
+                            Delete Task
+                        </Button>
+                    </>
+                }
+            >
+                {deleteError && (
+                    <div className="p-2.5 mb-3 rounded bg-dev-surface border border-dev-red/30 text-dev-red text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span>{deleteError}</span>
+                    </div>
+                )}
+                <div className="text-xs text-dev-textMuted space-y-2">
+                    <p>
+                        Are you sure you want to delete task <span className="text-dev-heading font-semibold">"{taskToDelete?.title}"</span>?
+                    </p>
+                    {taskToDelete?.projectName && (
+                        <p className="text-[11px] text-dev-textSubtle">
+                            Project: <span className="font-mono text-dev-text">{taskToDelete.projectName}</span>
+                        </p>
+                    )}
+                </div>
             </Modal>
         </div>
     );

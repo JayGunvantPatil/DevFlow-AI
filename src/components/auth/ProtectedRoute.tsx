@@ -9,6 +9,7 @@ interface ProtectedRouteProps {
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     const { isAuthenticated, isLoading, openAuthModal } = useAuth();
+    const outletContext = useOutletContext();
 
     if (isLoading) {
         return (
@@ -52,6 +53,5 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
         );
     }
 
-    const outletContext = useOutletContext();
     return children ? <>{children}</> : <Outlet context={outletContext} />;
 };

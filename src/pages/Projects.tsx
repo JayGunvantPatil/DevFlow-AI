@@ -7,6 +7,9 @@ import {
     Clock,
     RefreshCw,
     AlertCircle,
+    CheckCircle2,
+    X,
+    ShieldAlert,
     Trash2,
     Edit2,
     MoreVertical,
@@ -27,6 +30,7 @@ export const Projects: React.FC = () => {
     const [projects, setProjects] = useState<Project[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | ProjectStatus>('all');
 
@@ -96,6 +100,14 @@ export const Projects: React.FC = () => {
             setCreateFormError('Project name is required');
             return;
         }
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            setCreateFormError('Project name must be between 2 and 100 characters');
+            return;
+        }
+        if (newDesc.length > 1000) {
+            setCreateFormError('Description cannot exceed 1000 characters');
+            return;
+        }
 
         setIsCreateSubmitting(true);
         setCreateFormError(null);
@@ -118,6 +130,8 @@ export const Projects: React.FC = () => {
             setNewName('');
             setNewDesc('');
             setNewTags('TypeScript, React');
+            setSuccessMessage(`Project "${res.project.name}" created successfully`);
+            setTimeout(() => setSuccessMessage(null), 5000);
         } catch (err: any) {
             setCreateFormError(err.message || 'Failed to create project');
         } finally {
@@ -186,6 +200,8 @@ export const Projects: React.FC = () => {
 
             setIsEditModalOpen(false);
             setEditingProject(null);
+            setSuccessMessage(`Project "${res.project.name}" updated successfully`);
+            setTimeout(() => setSuccessMessage(null), 5000);
         } catch (err: any) {
             setEditFormError(err.message || 'Failed to update project');
         } finally {
@@ -203,9 +219,12 @@ export const Projects: React.FC = () => {
         setIsDeleting(true);
         setDeleteError(null);
         try {
+            const deletedName = projectToDelete.name;
             await apiClient.deleteProject(projectToDelete.id);
             setProjects((prev) => prev.filter((p) => p.id !== projectToDelete.id));
             setProjectToDelete(null);
+            setSuccessMessage(`Project "${deletedName}" deleted successfully`);
+            setTimeout(() => setSuccessMessage(null), 5000);
         } catch (err: any) {
             setDeleteError(err.message || 'Failed to delete project');
         } finally {
@@ -231,6 +250,22 @@ export const Projects: React.FC = () => {
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
+            {/* Success Notification Banner */}
+            {successMessage && (
+                <div className="p-3 px-4 rounded-lg bg-dev-success/15 border border-dev-success/30 flex items-center justify-between text-xs text-dev-success animate-fadeIn">
+                    <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span className="font-medium">{successMessage}</span>
+                    </div>
+                    <button
+                        onClick={() => setSuccessMessage(null)}
+                        className="hover:opacity-75 transition-opacity"
+                        title="Dismiss"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            )}
             {/* Header Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
                 {/* Search */}
@@ -271,13 +306,21 @@ export const Projects: React.FC = () => {
                 </div>
             </div>
 
-            {/* Database Error Banner if unconfigured or failed */}
+            {/* Database or Permission Error Banner */}
             {error && (
-                <div className="p-4 rounded-lg bg-dev-surface border border-dev-red/30 space-y-3">
+                <div className={`p-4 rounded-lg bg-dev-surface border ${error.toLowerCase().includes('forbidden') || error.toLowerCase().includes('permission') ? 'border-amber-500/40 bg-amber-500/5' : 'border-dev-red/30'} space-y-3`}>
                     <div className="flex items-start gap-3">
-                        <AlertCircle className="w-5 h-5 text-dev-red flex-shrink-0 mt-0.5" />
+                        {error.toLowerCase().includes('forbidden') || error.toLowerCase().includes('permission') ? (
+                            <ShieldAlert className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        ) : (
+                            <AlertCircle className="w-5 h-5 text-dev-red flex-shrink-0 mt-0.5" />
+                        )}
                         <div className="flex-1 space-y-1 text-xs">
-                            <h4 className="font-semibold text-dev-heading">Backend Database Notice</h4>
+                            <h4 className="font-semibold text-dev-heading">
+                                {error.toLowerCase().includes('forbidden') || error.toLowerCase().includes('permission')
+                                    ? 'Access Restricted (403 Forbidden)'
+                                    : 'Backend Service Notice'}
+                            </h4>
                             <p className="text-dev-textMuted leading-relaxed">{error}</p>
                             {error.includes('DATABASE_URL') && (
                                 <div className="mt-2 p-2.5 rounded bg-dev-bg border border-dev-border text-[11px] font-mono space-y-1 text-dev-text">

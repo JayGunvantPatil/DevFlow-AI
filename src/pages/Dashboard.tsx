@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useOutletContext, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
     FolderGit2,
     GitBranch,
@@ -14,7 +14,7 @@ import {
     RefreshCw,
     Info,
 } from 'lucide-react';
-import { HealthCheckResult, Project, Task } from '../types';
+import { Project, Task } from '../types';
 import { apiClient } from '../services/apiClient';
 import { initialProjects, initialTasks, initialActivities } from '../lib/mockData';
 import { formatDate } from '../lib/utils';
@@ -22,24 +22,10 @@ import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
-
-interface DashboardContext {
-    health?: HealthCheckResult;
-    onRefreshHealth?: () => void;
-}
-
-const defaultHealth: HealthCheckResult = {
-    data: null,
-    latencyMs: null,
-    error: null,
-    loading: false,
-    lastChecked: null,
-};
+import { useHealth } from '../context/HealthContext';
 
 export const Dashboard: React.FC = () => {
-    const outletContext = useOutletContext<DashboardContext | undefined>();
-    const health = outletContext?.health || defaultHealth;
-    const onRefreshHealth = outletContext?.onRefreshHealth || (() => {});
+    const { health, refreshHealth: onRefreshHealth } = useHealth();
     const [projects, setProjects] = useState<Project[]>(initialProjects);
     const [tasks, setTasks] = useState<Task[]>(initialTasks);
     const [showGithubModal, setShowGithubModal] = useState(false);

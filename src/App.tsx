@@ -13,12 +13,14 @@ import { TeamWorkspace } from './pages/TeamWorkspace';
 import { Analytics } from './pages/Analytics';
 import { SettingsPage } from './pages/Settings';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { HealthProvider } from './context/HealthContext';
 
 export const App: React.FC = () => {
     return (
         <ErrorBoundary>
             <AuthProvider>
-                <BrowserRouter>
+                <HealthProvider>
+                    <BrowserRouter>
                     <Routes>
                         <Route element={<AppLayout />}>
                             {/* Protected Application Routes */}
@@ -38,9 +40,10 @@ export const App: React.FC = () => {
                         </Route>
                     </Routes>
                 </BrowserRouter>
-            </AuthProvider>
-        </ErrorBoundary>
-    );
+            </HealthProvider>
+        </AuthProvider>
+    </ErrorBoundary>
+);
 };
 
 export default App;

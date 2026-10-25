@@ -5,17 +5,30 @@ import projectDetailHandler from '../api/projects/[id].ts';
 import tasksHandler from '../api/tasks/index.ts';
 import taskDetailHandler from '../api/tasks/[id].ts';
 import { resetDbPool } from '../api/_utils/db.ts';
+import { createSessionToken } from '../api/_utils/auth.ts';
 
-function createMockReqRes(method: string, body: any = {}, query: Record<string, string> = {}) {
+const testAuthToken = createSessionToken({
+    userId: 'a0000000-0000-0000-0000-000000000001',
+    email: 'sofia.chen@devflow.ai',
+    name: 'Sofia Chen',
+    role: 'lead',
+});
+
+function createMockReqRes(method: string, body: any = {}, query: Record<string, string> = {}, reqHeaders: Record<string, string> = {}) {
     const headers: Record<string, string> = {};
     let statusCode = 200;
     let bodyData: any = null;
+
+    const defaultHeaders: Record<string, string> = {
+        authorization: `Bearer ${testAuthToken}`,
+        ...reqHeaders,
+    };
 
     const req: any = {
         method,
         body,
         query,
-        headers: {},
+        headers: defaultHeaders,
     };
 
     const res: any = {
@@ -216,7 +229,7 @@ describe('API Route Handlers Integration', () => {
         const { req, res } = createMockReqRes('GET');
         await projectsHandler(req, res);
 
-        assert.equal(res._getHeaders()['x-devflow-stage'], 'Phase-2-Development');
-        assert.equal(res._getHeaders()['x-devflow-auth'], 'Unenforced-Development-Mode');
+        assert.equal(res._getHeaders()['x-devflow-stage'], 'Phase-3B-Production-Ready');
+        assert.equal(res._getHeaders()['x-devflow-auth'], 'Enforced');
     });
 });
