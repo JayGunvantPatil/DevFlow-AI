@@ -1,5 +1,5 @@
 import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
-import { extractUserFromRequest } from '../_utils/auth.js';
+import { requireAuth } from '../_utils/auth.js';
 import {
     VercelRequest,
     VercelResponse,
@@ -18,17 +18,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-DevFlow-Auth', 'Enforced');
 
     // Enforce server-side authentication
-    const authUser = extractUserFromRequest(req);
-    if (req.headers?.authorization && !authUser) {
-        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
-    }
+    const authUser = requireAuth(req, res);
     if (!authUser) {
-        return errorResponse(
-            res,
-            401,
-            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
-            'UNAUTHORIZED'
-        );
+        return;
     }
 
     let body = req.body;
@@ -60,7 +52,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           t.title, t.status, t.priority,
           t.assignee_name AS "assigneeName", t.assignee_avatar AS "assigneeAvatar",
           t.created_at AS "createdAt", t.updated_at AS "updatedAt",
-          t.user_id AS "userId"
+          t.user_id AS "userId",
+          p.user_id AS "projectUserId"
         FROM tasks t
         JOIN projects p ON p.id = t.project_id
         WHERE t.id::text = $1
@@ -74,14 +67,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             const r = rows[0];
 
-            // Enforce ownership: 403 Forbidden if task belongs to another user
-            if (hasUserCol && r.userId && r.userId !== authUser.userId) {
-                return errorResponse(
-                    res,
-                    403,
-                    'Access forbidden: You do not have permission to access this task',
-                    'FORBIDDEN'
-                );
+            // Enforce ownership: 403 Forbidden if task and parent project belong to another user
+            if (hasUserCol) {
+                const isAuthorized = r.userId === authUser.userId || r.projectUserId === authUser.userId;
+                if (!isAuthorized) {
+                    return errorResponse(
+                        res,
+                        403,
+                        'Access forbidden: You do not have permission to access this task',
+                        'FORBIDDEN'
+                    );
+                }
             }
 
             return jsonResponse(res, 200, {
@@ -158,14 +154,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // Verify task existence and ownership before updating
             if (hasUserCol) {
-                const existing = await query<{ id: string; user_id: string }>(
-                    'SELECT id, user_id FROM tasks WHERE id::text = $1',
+                const existing = await query<{ id: string; user_id: string | null; project_user_id: string | null }>(
+                    `SELECT t.id, t.user_id, p.user_id AS project_user_id 
+                     FROM tasks t 
+                     LEFT JOIN projects p ON p.id = t.project_id 
+                     WHERE t.id::text = $1`,
                     [cleanId]
                 );
                 if (existing.length === 0) {
                     return errorResponse(res, 404, `Task not found with id: ${cleanId}`, 'TASK_NOT_FOUND');
                 }
-                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                const isAuthorized = existing[0].user_id === authUser.userId || existing[0].project_user_id === authUser.userId;
+                if (!isAuthorized) {
                     return errorResponse(
                         res,
                         403,
@@ -181,7 +181,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (hasUserCol) {
                 params.push(authUser.userId);
-                userWhereClause = `AND user_id = $${params.length}`;
+                userWhereClause = `AND (user_id = $${params.length} OR project_id IN (SELECT id FROM projects WHERE user_id = $${params.length}))`;
             }
 
             const sql = `
@@ -219,14 +219,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'DELETE') {
             // Verify task existence and ownership before deleting
             if (hasUserCol) {
-                const existing = await query<{ id: string; user_id: string }>(
-                    'SELECT id, user_id FROM tasks WHERE id::text = $1',
+                const existing = await query<{ id: string; user_id: string | null; project_user_id: string | null }>(
+                    `SELECT t.id, t.user_id, p.user_id AS project_user_id 
+                     FROM tasks t 
+                     LEFT JOIN projects p ON p.id = t.project_id 
+                     WHERE t.id::text = $1`,
                     [cleanId]
                 );
                 if (existing.length === 0) {
                     return errorResponse(res, 404, `Task not found with id: ${cleanId}`, 'TASK_NOT_FOUND');
                 }
-                if (existing[0].user_id && existing[0].user_id !== authUser.userId) {
+                const isAuthorized = existing[0].user_id === authUser.userId || existing[0].project_user_id === authUser.userId;
+                if (!isAuthorized) {
                     return errorResponse(
                         res,
                         403,
@@ -241,7 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (hasUserCol) {
                 params.push(authUser.userId);
-                userWhere = `AND user_id = $${params.length}`;
+                userWhere = `AND (user_id = $${params.length} OR project_id IN (SELECT id FROM projects WHERE user_id = $${params.length}))`;
             }
 
             const sql = `DELETE FROM tasks WHERE id::text = $1 ${userWhere} RETURNING id`;

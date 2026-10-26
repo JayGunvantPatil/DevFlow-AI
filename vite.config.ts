@@ -138,6 +138,34 @@ export default defineConfig(({ mode }) => {
                                 return;
                             }
 
+                            // Route 10: /api/github/connect
+                            if (pathname === '/api/github/connect') {
+                                const connectHandler = (await import('./api/github/connect')).default;
+                                await connectHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 11: /api/github/callback
+                            if (pathname === '/api/github/callback') {
+                                const callbackHandler = (await import('./api/github/callback')).default;
+                                await callbackHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 12: /api/github/status
+                            if (pathname === '/api/github/status') {
+                                const statusHandler = (await import('./api/github/status')).default;
+                                await statusHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
+                            // Route 13: /api/github/disconnect
+                            if (pathname === '/api/github/disconnect') {
+                                const disconnectHandler = (await import('./api/github/disconnect')).default;
+                                await disconnectHandler(vercelReq, vercelRes);
+                                return;
+                            }
+
                             next();
                         } catch (err: any) {
                             console.error('API middleware error:', err);

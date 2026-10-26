@@ -39,12 +39,12 @@ INSERT INTO users (id, email, password_hash, name, avatar, role)
 VALUES (
   'a0000000-0000-0000-0000-000000000001',
   'sofia.chen@devflow.ai',
-  'scrypt$bWlncmF0aW9uX3NhbHQx$6c459c0490b0e513885d564bb378e9f50e7b4e9f7eeeb22496f86e3f3cb1ff9792671f5436c646ef42cbb9539d48b11b51e064972fa6a6f695ec58dcf400c2aa',
+  'scrypt$3d7f11073801dbc2879330e628aeec30$e80bf62393aef3144f270fcbcd1b551319029dd7aea2087c413d0009e37782f1d1a7911fec4ecc8a833d5a0d410f26304e0e66d289879dc2cf1ffc11957fc7e7',
   'Sofia Chen',
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
   'lead'
 )
-ON CONFLICT (email) DO NOTHING;
+ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 
 -- 5. Safe Backfill: Associate any existing projects with the migration user
 UPDATE projects

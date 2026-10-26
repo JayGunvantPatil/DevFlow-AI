@@ -1,6 +1,6 @@
 import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
 import { validateTaskInput } from '../_utils/validate.js';
-import { extractUserFromRequest } from '../_utils/auth.js';
+import { requireAuth } from '../_utils/auth.js';
 import taskDetailHandler from './[id].js';
 import {
     VercelRequest,
@@ -22,17 +22,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-DevFlow-Auth', 'Enforced');
 
     // Enforce server-side authentication
-    const authUser = extractUserFromRequest(req);
-    if (req.headers?.authorization && !authUser) {
-        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
-    }
+    const authUser = requireAuth(req, res);
     if (!authUser) {
-        return errorResponse(
-            res,
-            401,
-            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
-            'UNAUTHORIZED'
-        );
+        return;
     }
 
     // If request uses detail methods (PATCH/PUT/DELETE) or GET with an id, delegate to taskDetailHandler
@@ -53,10 +45,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const conditions: string[] = [];
             const params: any[] = [];
 
-            // Strict user isolation scoping: tasks must belong to authenticated user
+            // Strict user isolation scoping: tasks must belong to authenticated user OR parent project of authenticated user
             if (hasUserCol) {
                 params.push(authUser.userId);
-                conditions.push(`t.user_id = $${params.length}`);
+                conditions.push(`(t.user_id = $${params.length} OR p.user_id = $${params.length})`);
             }
 
             // If filtering by specific project, verify project access first

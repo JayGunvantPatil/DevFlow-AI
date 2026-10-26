@@ -1,6 +1,6 @@
 import { query, DatabaseNotConfiguredError, checkHasUserIdColumn } from '../_utils/db.js';
 import { validateProjectInput } from '../_utils/validate.js';
-import { extractUserFromRequest } from '../_utils/auth.js';
+import { requireAuth } from '../_utils/auth.js';
 import projectDetailHandler from './[id].js';
 import {
     VercelRequest,
@@ -22,17 +22,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-DevFlow-Auth', 'Enforced');
 
     // Enforce server-side authentication
-    const authUser = extractUserFromRequest(req);
-    if (req.headers?.authorization && !authUser) {
-        return errorResponse(res, 401, 'Invalid or expired authentication token', 'UNAUTHORIZED');
-    }
+    const authUser = requireAuth(req, res);
     if (!authUser) {
-        return errorResponse(
-            res,
-            401,
-            'Authentication required. Please provide a valid Bearer token in the Authorization header.',
-            'UNAUTHORIZED'
-        );
+        return;
     }
 
     // If request has project id, delegate to projectDetailHandler

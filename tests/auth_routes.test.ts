@@ -1,3 +1,4 @@
+import './setup_env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import registerHandler from '../api/auth/register.js';
@@ -107,6 +108,37 @@ describe('Auth Route Handlers Integration', () => {
         await loginHandler(req, res);
         assert.equal(getStatus(), 422);
         assert.equal(getBody()?.error?.code, 'VALIDATION_ERROR');
+    });
+
+    it('loginHandler returns 401 on non-existent user email', async () => {
+        const { req, res, getStatus, getBody } = createMockReqRes({
+            method: 'POST',
+            body: { email: 'nonexistent_user_999@devflow.ai', password: 'SomePassword123!' },
+        });
+        await loginHandler(req, res);
+        assert.equal(getStatus(), 401);
+        assert.equal(getBody()?.error?.code, 'INVALID_CREDENTIALS');
+    });
+
+    it('loginHandler returns 401 on incorrect password', async () => {
+        const { req, res, getStatus, getBody } = createMockReqRes({
+            method: 'POST',
+            body: { email: 'sofia.chen@devflow.ai', password: 'DefinitelyWrongPassword123!' },
+        });
+        await loginHandler(req, res);
+        assert.equal(getStatus(), 401);
+        assert.equal(getBody()?.error?.code, 'INVALID_CREDENTIALS');
+    });
+
+    it('loginHandler returns 200 with JWT token on valid credentials', async () => {
+        const { req, res, getStatus, getBody } = createMockReqRes({
+            method: 'POST',
+            body: { email: 'sofia.chen@devflow.ai', password: 'SofiaDevFlow2026!' },
+        });
+        await loginHandler(req, res);
+        assert.equal(getStatus(), 200);
+        assert.ok(getBody()?.token, 'Response must contain a valid session token');
+        assert.equal(getBody()?.user?.email, 'sofia.chen@devflow.ai');
     });
 
     it('meHandler returns 401 when Authorization header is absent', async () => {

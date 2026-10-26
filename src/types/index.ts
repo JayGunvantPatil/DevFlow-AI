@@ -111,3 +111,22 @@ export interface BreadcrumbItem {
     label: string;
     path?: string;
 }
+
+export interface GitHubIntegration {
+    id: string;
+    username: string | null;
+    avatarUrl: string | null;
+    accountType: string;
+    installationId: string | null;
+    status: 'connected' | 'disconnected' | 'suspended';
+    scope: string | null;
+    connectedAt: string;
+    updatedAt: string;
+}
+
+export interface GitHubStatusResponse {
+    configured: boolean;
+    connected: boolean;
+    integration: GitHubIntegration | null;
+    error?: string;
+}

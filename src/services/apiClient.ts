@@ -1,4 +1,4 @@
-import { AuthResponse, HealthResponse, Project, ProjectStatus, Task, User } from '../types';
+import { AuthResponse, GitHubStatusResponse, HealthResponse, Project, ProjectStatus, Task, User } from '../types';
 
 export class ApiError extends Error {
     code?: string;
@@ -270,6 +270,26 @@ class ApiClient {
     async deleteTask(id: string): Promise<{ success: boolean; deletedId: string }> {
         return this.request<{ success: boolean; deletedId: string }>(`/api/tasks/${id}`, {
             method: 'DELETE',
+        });
+    }
+
+    /**
+     * GitHub Integration API
+     */
+    async getGitHubStatus(): Promise<GitHubStatusResponse> {
+        return this.request<GitHubStatusResponse>('/api/github/status', { method: 'GET' });
+    }
+
+    async getGitHubConnectUrl(returnTo: string = '/settings'): Promise<{ success: boolean; url: string; state: string }> {
+        const query = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : '';
+        return this.request<{ success: boolean; url: string; state: string }>(`/api/github/connect${query}`, {
+            method: 'POST',
+        });
+    }
+
+    async disconnectGitHub(): Promise<{ success: boolean; message: string }> {
+        return this.request<{ success: boolean; message: string }>('/api/github/disconnect', {
+            method: 'POST',
         });
     }
 }

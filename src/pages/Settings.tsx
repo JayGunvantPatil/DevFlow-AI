@@ -1,14 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Moon, User, Key, Database, Github, Check, Shield } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { useAuth } from '../context/AuthContext';
+import { GitHubIntegrationCard } from '../components/github/GitHubIntegrationCard';
 
 export const SettingsPage: React.FC = () => {
-    const [name, setName] = useState('Sofia Chen');
-    const [email, setEmail] = useState('sofia.chen@devflow.local');
+    const { user } = useAuth();
+    const [name, setName] = useState(user?.name || 'Sofia Chen');
+    const [email, setEmail] = useState(user?.email || 'sofia.chen@devflow.local');
     const [savedNotice, setSavedNotice] = useState(false);
     const [themeOption, setThemeOption] = useState<'charcoal' | 'pitch' | 'dim'>('charcoal');
+
+    useEffect(() => {
+        if (user) {
+            setName(user.name);
+            setEmail(user.email);
+        }
+    }, [user]);
 
     const handleSaveProfile = (e: React.FormEvent) => {
         e.preventDefault();
@@ -124,6 +134,9 @@ export const SettingsPage: React.FC = () => {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Phase 4A GitHub Integration */}
+            <GitHubIntegrationCard returnTo="/settings" />
 
             {/* Integrations Keys Placeholder (Phase 2 & 3) */}
             <Card>

@@ -12,6 +12,7 @@ The project contains two SQL files under the [`migrations/`](file:///migrations/
 | :--- | :--- | :--- |
 | [`001_init_projects_and_tasks.sql`](file:///migrations/001_init_projects_and_tasks.sql) | Creates the `projects` and `tasks` tables, extensions, triggers, and performance indexes. | **Required** |
 | [`002_user_authentication.sql`](file:///migrations/002_user_authentication.sql) | Creates `users` table, adds non-destructive `user_id` foreign keys to `projects` and `tasks`, backfills default migration owner, and adds indexes. | **Required for Auth** |
+| [`003_github_integration.sql`](file:///migrations/003_github_integration.sql) | Creates `github_integrations` table with user-level ownership, installation IDs, and security triggers. | **Required for Phase 4A** |
 | [`seed.sql`](file:///migrations/seed.sql) | Inserts 3 sample engineering projects and 5 linked tasks for immediate testing. | *Optional* |
 
 ---
@@ -65,6 +66,13 @@ The project contains two SQL files under the [`migrations/`](file:///migrations/
 3. Paste it into the Neon SQL Editor query tab.
 4. Click **Run** (`Ctrl+Enter` on Windows / `Cmd+Enter` on Mac).
 5. This safely creates the `users` table, adds `user_id` foreign key columns to `projects` and `tasks` without deleting existing records, provisions a migration user, and creates performance indexes.
+
+### Step 6: Run GitHub Integration Migration (`003_github_integration.sql`)
+1. Open [`migrations/003_github_integration.sql`](file:///migrations/003_github_integration.sql).
+2. Copy the entire file content.
+3. Paste it into the Neon SQL Editor query tab.
+4. Click **Run** (`Ctrl+Enter` on Windows / `Cmd+Enter` on Mac).
+5. This creates the `github_integrations` table with strict user-level foreign key isolation (`user_id REFERENCES users(id)`), status constraints, metadata storage, and audit timestamp triggers.
 
 ---
 

@@ -1,5 +1,5 @@
 import { query, DatabaseNotConfiguredError } from '../_utils/db.js';
-import { verifyPassword, createSessionToken } from '../_utils/auth.js';
+import { verifyPassword, createSessionToken, hashPassword } from '../_utils/auth.js';
 import { validateLoginInput } from '../_utils/validate.js';
 import {
     VercelRequest,
@@ -32,6 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const validation = validateLoginInput(body);
         if (!validation.isValid || !validation.data) {
+            console.warn('[Auth/Login] Validation rejected login payload:', validation.errors);
             return validationErrorResponse(
                 res,
                 'Login validation failed',
@@ -51,12 +52,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             role: 'developer' | 'lead' | 'admin';
             created_at: string;
         }>(
-            'SELECT id, name, email, password_hash, avatar, role, created_at FROM users WHERE email = $1 LIMIT 1',
+            'SELECT id, name, email, password_hash, avatar, role, created_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
             [email]
         );
 
         if (rows.length === 0) {
-            // Constant-time dummy check could be added, but 401 prevents enumeration
+            console.warn(`[Auth/Login] Authentication failed: user account with email "${email}" not found.`);
             return errorResponse(res, 401, 'Invalid email or password', 'INVALID_CREDENTIALS');
         }
 
@@ -65,8 +66,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Verify password using timing-safe comparison
         const isPasswordValid = await verifyPassword(password, user.password_hash);
         if (!isPasswordValid) {
+            console.warn(`[Auth/Login] Authentication failed: invalid password supplied for email "${email}".`);
             return errorResponse(res, 401, 'Invalid email or password', 'INVALID_CREDENTIALS');
         }
+
+        // Self-heal/upgrade legacy seed hash if present
+        if (user.password_hash.includes('bWlncmF0aW9uX3NhbHQx')) {
+            try {
+                const upgradedHash = await hashPassword(password);
+                await query('UPDATE users SET password_hash = $1 WHERE id = $2', [upgradedHash, user.id]);
+                console.log(`[Auth/Login] Upgraded legacy password hash to modern scrypt for user: "${user.email}"`);
+            } catch (upgradeErr) {
+                // Non-blocking background upgrade failure
+                console.error('[Auth/Login] Could not upgrade legacy password hash:', upgradeErr);
+            }
+        }
+
+        console.log(`[Auth/Login] Authentication successful for user ID: ${user.id} (${user.email})`);
 
         // Generate signed JWT token
         const token = createSessionToken({

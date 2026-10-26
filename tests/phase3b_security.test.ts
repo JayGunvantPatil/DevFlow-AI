@@ -1,9 +1,14 @@
+import './setup_env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import projectsHandler from '../api/projects/index.ts';
 import projectDetailHandler from '../api/projects/[id].ts';
 import tasksHandler from '../api/tasks/index.ts';
 import taskDetailHandler from '../api/tasks/[id].ts';
+import registerHandler from '../api/auth/register.ts';
+import loginHandler from '../api/auth/login.ts';
+import meHandler from '../api/auth/me.ts';
+import logoutHandler from '../api/auth/logout.ts';
 import { createSessionToken } from '../api/_utils/auth.ts';
 import { query } from '../api/_utils/db.ts';
 
@@ -385,7 +390,125 @@ describe('Phase 3B: Server-Side Authorization & User Data Isolation', () => {
         });
     });
 
-    describe('Scenario 5: Invalid input validation returns appropriate HTTP error codes', () => {
+    describe('Scenario 6: Client-supplied user IDs cannot override authenticated identity', () => {
+        it('ignores client-supplied user_id in project and task creation, deriving identity exclusively from token', async (t) => {
+            if (!hasDbUrl) {
+                t.skip('Skipping live DB test because DATABASE_URL is not configured');
+                return;
+            }
+
+            const spoofProjectName = `Spoof-Test-${Date.now()}`;
+            // User A creates project, attempting to spoof user_id as User B's ID in body
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+                body: {
+                    name: spoofProjectName,
+                    description: 'Spoof attempt',
+                    status: 'active',
+                    userId: userB.userId,
+                    user_id: userB.userId,
+                },
+                token: tokenA,
+            });
+
+            await projectsHandler(req, res);
+            assert.equal(getStatus(), 201);
+            const createdProj = getBody()?.project;
+            assert.ok(createdProj?.id);
+
+            // Verify in DB that project was assigned to User A (not User B)
+            const dbCheck = await query<{ user_id: string }>(
+                'SELECT user_id FROM projects WHERE id::text = $1',
+                [createdProj.id]
+            );
+            assert.equal(dbCheck[0]?.user_id, userA.userId, 'Project user_id must be User A, ignoring spoofed client ID');
+
+            // User A creates task, attempting to spoof user_id as User B's ID
+            const taskReq = createMockReqRes({
+                method: 'POST',
+                body: {
+                    projectId: createdProj.id,
+                    title: 'Spoof Task Validation',
+                    status: 'todo',
+                    priority: 'low',
+                    userId: userB.userId,
+                    user_id: userB.userId,
+                },
+                token: tokenA,
+            });
+
+            await tasksHandler(taskReq.req, taskReq.res);
+            assert.equal(taskReq.getStatus(), 201);
+            const createdTask = taskReq.getBody()?.task;
+            assert.ok(createdTask?.id);
+
+            const taskDbCheck = await query<{ user_id: string }>(
+                'SELECT user_id FROM tasks WHERE id::text = $1',
+                [createdTask.id]
+            );
+            assert.equal(taskDbCheck[0]?.user_id, userA.userId, 'Task user_id must be User A, ignoring spoofed client ID');
+
+            // Cleanup
+            await query('DELETE FROM tasks WHERE id::text = $1', [createdTask.id]);
+            await query('DELETE FROM projects WHERE id::text = $1', [createdProj.id]);
+        });
+    });
+
+    describe('Scenario 7: Invalid IDs and malformed input are handled safely', () => {
+        it('returns 400 when project id is missing or empty', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                query: { id: '   ' },
+                token: tokenA,
+            });
+            await projectDetailHandler(req, res);
+            assert.equal(getStatus(), 400);
+            assert.equal(getBody()?.error?.code, 'INVALID_ID');
+        });
+
+        it('returns 404 when project id is non-existent without throwing 500 SQL error', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                query: { id: '99999999-9999-9999-9999-999999999999' },
+                token: tokenA,
+            });
+            await projectDetailHandler(req, res);
+            assert.equal(getStatus(), 404);
+            assert.equal(getBody()?.error?.code, 'PROJECT_NOT_FOUND');
+        });
+
+        it('returns 404 when project slug has special characters without SQL crash', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                query: { id: "' OR '1'='1" },
+                token: tokenA,
+            });
+            await projectDetailHandler(req, res);
+            assert.equal(getStatus(), 404);
+        });
+
+        it('returns 400 when task id is missing or empty', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                query: { id: '' },
+                token: tokenA,
+            });
+            await taskDetailHandler(req, res);
+            assert.equal(getStatus(), 400);
+            assert.equal(getBody()?.error?.code, 'INVALID_ID');
+        });
+
+        it('returns 404 when task id is non-existent without throwing 500 SQL error', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                query: { id: '00000000-0000-0000-0000-000000000000' },
+                token: tokenA,
+            });
+            await taskDetailHandler(req, res);
+            assert.equal(getStatus(), 404);
+            assert.equal(getBody()?.error?.code, 'TASK_NOT_FOUND');
+        });
+
         it('returns 422 on invalid project creation (short name)', async () => {
             const { req, res, getStatus, getBody } = createMockReqRes({
                 method: 'POST',
@@ -430,6 +553,113 @@ describe('Phase 3B: Server-Side Authorization & User Data Isolation', () => {
             await taskDetailHandler(req, res);
             assert.equal(getStatus(), 400);
             assert.equal(getBody()?.error?.code, 'INVALID_PRIORITY');
+        });
+    });
+
+    describe('Scenario 8: Login, registration, logout, and session validation continue to work', () => {
+        const testEmail = `sec_iso_${Date.now()}@devflow.ai`;
+        const testPassword = 'SecureIsoPassword2026!';
+        let registeredToken: string;
+        let registeredUserId: string;
+
+        it('registers a new isolated test account with 201', async (t) => {
+            if (!hasDbUrl) {
+                t.skip('Skipping live DB test');
+                return;
+            }
+
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+                body: {
+                    name: 'Isolated Security Account',
+                    email: testEmail,
+                    password: testPassword,
+                },
+            });
+
+            await registerHandler(req, res);
+            assert.equal(getStatus(), 201);
+            const body = getBody();
+            assert.ok(body?.token);
+            assert.ok(body?.user?.id);
+            registeredToken = body.token;
+            registeredUserId = body.user.id;
+        });
+
+        it('rejects duplicate registration with 409 EMAIL_ALREADY_EXISTS', async (t) => {
+            if (!hasDbUrl || !registeredUserId) {
+                t.skip('Skipping live DB test');
+                return;
+            }
+
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+                body: {
+                    name: 'Isolated Security Account',
+                    email: testEmail,
+                    password: testPassword,
+                },
+            });
+
+            await registerHandler(req, res);
+            assert.equal(getStatus(), 409);
+            assert.equal(getBody()?.error?.code, 'EMAIL_ALREADY_EXISTS');
+        });
+
+        it('authenticates login with valid credentials with 200 and generates session token', async (t) => {
+            if (!hasDbUrl || !registeredUserId) {
+                t.skip('Skipping live DB test');
+                return;
+            }
+
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+                body: {
+                    email: testEmail,
+                    password: testPassword,
+                },
+            });
+
+            await loginHandler(req, res);
+            assert.equal(getStatus(), 200);
+            assert.ok(getBody()?.token);
+            assert.equal(getBody()?.user?.email, testEmail);
+        });
+
+        it('verifies session via GET /api/auth/me with 200', async (t) => {
+            if (!hasDbUrl || !registeredToken) {
+                t.skip('Skipping live DB test');
+                return;
+            }
+
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'GET',
+                token: registeredToken,
+            });
+
+            await meHandler(req, res);
+            assert.equal(getStatus(), 200);
+            assert.equal(getBody()?.user?.id, registeredUserId);
+            assert.equal(getBody()?.user?.email, testEmail);
+        });
+
+        it('performs logout successfully with 200', async () => {
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+            });
+
+            await logoutHandler(req, res);
+            assert.equal(getStatus(), 200);
+            assert.equal(getBody()?.success, true);
+        });
+
+        it('cleans up isolated test account in DB', async (t) => {
+            if (!hasDbUrl || !registeredUserId) {
+                t.skip('Skipping cleanup');
+                return;
+            }
+
+            await query('DELETE FROM users WHERE id::text = $1', [registeredUserId]);
         });
     });
 });
