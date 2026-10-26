@@ -285,7 +285,8 @@ describe('DevFlow AI — Phase 4A: Secure GitHub Integration', () => {
             assert.ok(setCookie.includes('SameSite=Lax'));
         });
 
-        it('supports GitHub App installation URL when GITHUB_APP_SLUG is configured', async () => {
+        it('supports GitHub App installation URL when only GITHUB_APP_SLUG is configured', async () => {
+            delete process.env.GITHUB_CLIENT_ID;
             process.env.GITHUB_APP_SLUG = 'devflow-ai-workspace';
 
             const { req, res, getStatus, getBody } = createMockReqRes({
@@ -299,6 +300,24 @@ describe('DevFlow AI — Phase 4A: Secure GitHub Integration', () => {
             assert.ok(authUrl.startsWith('https://github.com/apps/devflow-ai-workspace/installations/new'));
             assert.ok(authUrl.includes('state='));
         });
+
+        it('supports explicit flow=install query parameter to trigger installation URL', async () => {
+            process.env.GITHUB_APP_SLUG = 'devflow-ai-workspace';
+            process.env.GITHUB_CLIENT_ID = 'gh_test_client_id_123';
+
+            const { req, res, getStatus, getBody } = createMockReqRes({
+                method: 'POST',
+                token: tokenA,
+                query: { flow: 'install' },
+            });
+
+            await connectHandler(req, res);
+            assert.strictEqual(getStatus(), 200);
+            const authUrl = getBody()?.url;
+            assert.ok(authUrl.startsWith('https://github.com/apps/devflow-ai-workspace/installations/new'));
+            assert.ok(authUrl.includes('state='));
+        });
+
 
         it('performs HTTP 302 redirect for direct browser navigation', async () => {
             const { req, res, getStatus, getHeaders } = createMockReqRes({

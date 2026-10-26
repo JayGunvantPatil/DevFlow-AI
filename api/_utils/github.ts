@@ -375,7 +375,7 @@ export async function fetchGitHubUserProfile(accessToken: string): Promise<{
  */
 export async function fetchUserInstallations(
     accessToken: string
-): Promise<Array<{ id: number; accountLogin: string; targetType: string }> | null> {
+): Promise<Array<{ id: number; accountLogin: string; targetType: string; appId?: string; appSlug?: string }> | null> {
     try {
         const response = await fetch('https://api.github.com/user/installations', {
             headers: {
@@ -394,12 +394,34 @@ export async function fetchUserInstallations(
             return null;
         }
 
-        return data.installations.map((inst: any) => ({
+        const config = getGitHubConfig();
+        const installations = data.installations.map((inst: any) => ({
             id: inst.id,
             accountLogin: inst.account?.login || '',
             targetType: inst.target_type || inst.account?.type || 'User',
+            appId: inst.app_id ? String(inst.app_id) : undefined,
+            appSlug: inst.app_slug || undefined,
         }));
+
+        // Prioritize installations belonging to this specific GitHub App
+        if (config.appId || config.appSlug) {
+            const matched = installations.filter((inst: any) => {
+                if (config.appId && inst.appId && inst.appId === config.appId) {
+                    return true;
+                }
+                if (config.appSlug && inst.appSlug && inst.appSlug.toLowerCase() === config.appSlug.toLowerCase()) {
+                    return true;
+                }
+                return false;
+            });
+            if (matched.length > 0) {
+                return matched;
+            }
+        }
+
+        return installations;
     } catch {
         return null;
     }
 }
+

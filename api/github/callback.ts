@@ -4,6 +4,7 @@ import {
     verifyOAuthState,
     exchangeOAuthCode,
     fetchGitHubUserProfile,
+    fetchUserInstallations,
     upsertGitHubIntegration,
 } from '../_utils/github.js';
 
@@ -36,11 +37,19 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
     const clearCookieHeader = 'devflow_gh_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
     res.setHeader('Set-Cookie', clearCookieHeader);
 
+    console.log(
+        '[GitHub/Callback] Received callback. Code present: %s, Installation present: %s, Error: %s',
+        Boolean(codeParam),
+        Boolean(installationIdParam),
+        errorParam || 'none'
+    );
+
     // 1. Handle GitHub authorization denial or error
     if (errorParam) {
         const errorMsg = errorParam === 'access_denied'
             ? 'GitHub authorization was declined or cancelled.'
             : (errorDesc || `GitHub authorization failed (${errorParam})`);
+        console.warn('[GitHub/Callback] Authorization declined or error received: %s', errorMsg);
         res.statusCode = 302;
         res.setHeader('Location', `${returnTo}?github=error&message=${encodeURIComponent(errorMsg)}`);
         res.end();
@@ -49,6 +58,7 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
 
     // 2. Reject missing or invalid/expired CSRF state
     if (!stateParam || !statePayload) {
+        console.warn('[GitHub/Callback] Missing or invalid state parameter.');
         res.statusCode = 302;
         res.setHeader(
             'Location',
@@ -62,6 +72,7 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
 
     // 3. Process authorization (OAuth code and/or App installation ID)
     if (!codeParam && !installationIdParam) {
+        console.warn('[GitHub/Callback] Neither code nor installation ID was provided.');
         res.statusCode = 302;
         res.setHeader(
             'Location',
@@ -78,10 +89,13 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
         let accountType = 'User';
         let grantedScope = 'read:user';
         let accessToken: string | null = null;
+        let finalInstallationId: string | null = installationIdParam;
 
         if (codeParam) {
+            console.log('[GitHub/Callback] Exchanging OAuth authorization code...');
             const tokenResult = await exchangeOAuthCode(codeParam);
             if (tokenResult) {
+                console.log('[GitHub/Callback] Code exchange succeeded.');
                 accessToken = tokenResult.accessToken;
                 grantedScope = tokenResult.scope;
 
@@ -91,8 +105,23 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
                     githubUsername = profile.login;
                     githubAvatarUrl = profile.avatarUrl;
                     accountType = profile.type || 'User';
+                    console.log('[GitHub/Callback] Retrieved profile for GitHub user: @%s (ID: %s)', githubUsername, githubUserId);
+                }
+
+                // If installation_id was not in query params (e.g. from user authorization flow),
+                // query GitHub API to discover the app's installation ID
+                if (!finalInstallationId) {
+                    console.log('[GitHub/Callback] Querying user installations to discover GitHub App installation ID...');
+                    const installations = await fetchUserInstallations(accessToken);
+                    if (installations && installations.length > 0) {
+                        finalInstallationId = String(installations[0].id);
+                        console.log('[GitHub/Callback] Discovered GitHub App installation ID %s for user @%s', finalInstallationId, githubUsername);
+                    } else {
+                        console.log('[GitHub/Callback] No GitHub App installation found for user @%s (connected via OAuth user token)', githubUsername);
+                    }
                 }
             } else if (!installationIdParam) {
+                console.warn('[GitHub/Callback] OAuth code exchange failed. Check GITHUB_CLIENT_SECRET configuration.');
                 res.statusCode = 302;
                 res.setHeader(
                     'Location',
@@ -108,8 +137,8 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
             connectedVia: codeParam ? 'oauth' : 'app_install',
         };
 
-        if (installationIdParam) {
-            metadata.installationId = installationIdParam;
+        if (finalInstallationId) {
+            metadata.installationId = finalInstallationId;
         }
 
         // 4. Save connection in Neon DB, strictly bound to the authenticated user ID
@@ -118,13 +147,20 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
             githubUserId,
             githubUsername,
             githubAvatarUrl,
-            installationId: installationIdParam,
+            installationId: finalInstallationId,
             accountType,
             status: 'connected',
             scope: grantedScope,
             metadata,
             accessToken,
         });
+
+        console.log(
+            '[GitHub/Callback] Successfully saved GitHub integration for user %s (GitHub: @%s, Installation: %s)',
+            userId,
+            githubUsername || 'none',
+            finalInstallationId || 'none'
+        );
 
         // 5. Successful redirect
         const usernameQuery = githubUsername ? `&username=${encodeURIComponent(githubUsername)}` : '';
@@ -133,8 +169,10 @@ export default async function callbackHandler(req: VercelRequest, res: VercelRes
         res.end();
     } catch (err: any) {
         const safeError = err.message || 'Database error while saving GitHub connection';
+        console.error('[GitHub/Callback] Error during callback processing: %s', safeError);
         res.statusCode = 302;
         res.setHeader('Location', `${returnTo}?github=error&message=${encodeURIComponent(safeError)}`);
         res.end();
     }
 }
+
